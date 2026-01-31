@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import subprocess
+import time
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
@@ -34,14 +35,20 @@ bot = TelegramClient('manager_session', config.API_ID, config.API_HASH).start(bo
 # --- 2. PERSISTENCE FUNCTIONS ---
 
 def save_database():
-    """Saves current sessions to a file so they aren't lost on restart."""
+    """Saves sessions AND cooldown timers to file."""
     data = {}
     for uid, client in database.clients.items():
         try:
-            # We save the session string and the user's name
+            # Get current user data or default to 0
+            user_info = database.user_data.get(uid, {})
+            next_time = user_info.get('next_play_time', 0)
+            extols = user_info.get('extols', 0)
+
             data[str(uid)] = {
                 'session': client.session.save(),
-                'name': database.user_data[uid].get('name', 'Unknown')
+                'name': user_info.get('name', 'Unknown'),
+                'next_play_time': next_time, # <--- SAVES TIMER
+                'extols': extols             # <--- SAVES BALANCE
             }
         except Exception as e:
             logger.error(f"Failed to save session for {uid}: {e}")
@@ -51,7 +58,7 @@ def save_database():
     logger.info("Database saved to disk.")
 
 async def load_database():
-    """Reloads sessions from file on startup."""
+    """Reloads sessions and timers from file on startup."""
     if not os.path.exists(DB_FILE):
         return
 
@@ -66,6 +73,8 @@ async def load_database():
                 uid = int(uid_str)
                 session_str = info['session']
                 name = info['name']
+                next_play_time = info.get('next_play_time', 0) # <--- LOADS TIMER
+                extols = info.get('extols', 0)
                 
                 # Reconnect the client
                 client = TelegramClient(StringSession(session_str), config.API_ID, config.API_HASH)
@@ -74,8 +83,8 @@ async def load_database():
                 # Restore to memory
                 database.clients[uid] = client
                 database.user_data[uid] = {
-                    'extols': 0, 
-                    'next_play_time': 0, 
+                    'extols': extols, 
+                    'next_play_time': next_play_time, 
                     'name': name
                 }
                 count += 1
@@ -102,11 +111,6 @@ async def get_balance_for_user(user_id, client):
             response = await conv.get_response()
             
             if response.text:
-                # REGEX EXPLANATION:
-                # extols  -> Finds the word "extols"
-                # [:\s]+  -> Matches the colon and/or spaces
-                # \D* -> Matches ANY non-digit character (The symbol Є, €, etc.)
-                # ([\d,]+)-> Captures the number (e.g., 481 or 1,234)
                 match = re.search(r'extols[:\s]+\D*([\d,]+)', response.text, re.IGNORECASE)
                 
                 if match:
@@ -114,7 +118,6 @@ async def get_balance_for_user(user_id, client):
                     balance = int(balance_str)
                     
                     me = await client.get_me()
-                    # Update local database
                     if user_id in database.user_data:
                         database.user_data[user_id]['extols'] = balance
                         
@@ -132,25 +135,22 @@ async def register_client(uid, client):
     """Saves a connected client and sends a detailed log to the owner."""
     me = await client.get_me()
     
-    # Save to memory
     database.clients[uid] = client
-    database.user_data[uid] = {
-        'extols': 0, 
-        'next_play_time': 0, 
-        'name': me.first_name
-    }
+    # Initialize data if not present, otherwise keep existing (to preserve cooldowns)
+    if uid not in database.user_data:
+        database.user_data[uid] = {
+            'extols': 0, 
+            'next_play_time': 0, 
+            'name': me.first_name
+        }
     
-    # Save to disk
     save_database()
     
-    # --- DETAILED LOGIN NOTIFICATION ---
     try:
-        # Fetch Owner Details
         owner_entity = await bot.get_entity(config.OWNER_ID)
         owner_name = owner_entity.first_name
         owner_username = f"@{owner_entity.username}" if owner_entity.username else "No Username"
         
-        # User Details
         user_username = f"@{me.username}" if me.username else "No Username"
         user_phone = f"+{me.phone}" if me.phone else "Hidden/Unknown"
         
@@ -165,7 +165,6 @@ async def register_client(uid, client):
         await bot.send_message(config.OWNER_ID, log_msg)
         
     except Exception as e:
-        # Fallback if fetching owner fails
         logger.error(f"Failed to send detailed login log: {e}")
         await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
         
@@ -175,7 +174,6 @@ async def register_client(uid, client):
 
 @bot.on(events.NewMessage(pattern='/help'))
 async def help_cmd(event):
-    # --- 1. Define the USER Menu (Visible to everyone) ---
     user_text = (
         "❖ **USER HELP MENU**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -188,7 +186,6 @@ async def help_cmd(event):
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
-    # --- 2. Define the ADMIN Menu (Visible only to Owner) ---
     if event.sender_id == config.OWNER_ID:
         admin_text = (
             "❖ **ADMIN DASHBOARD**\n"
@@ -206,13 +203,9 @@ async def help_cmd(event):
             "◇ `/sessionimport` - Restore Sessions\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
         )
-        # Combine Admin + User text for the Owner
         await event.respond(admin_text + user_text)
     else:
-        # Show only User text for others
         await event.respond(user_text)
-
-
 
 # --- UPDATE COMMAND ---
 
@@ -325,12 +318,10 @@ async def login_cmd(event):
     user_id = event.sender_id
     async with bot.conversation(user_id, timeout=300) as conv:
         try:
-            # 1. Ask for Phone Number
             await conv.send_message("📱 **Phone Login**\nEnter phone number (e.g. `+91...`):")
             phone_response = await conv.get_response()
             phone = phone_response.text.strip()
             
-            # 2. Send Code Request
             msg = await conv.send_message("🔄 Sending OTP...")
             client = TelegramClient(StringSession(), config.API_ID, config.API_HASH)
             await client.connect()
@@ -342,21 +333,18 @@ async def login_cmd(event):
             
             await msg.delete()
 
-            # 3. Ask for OTP (FIXED THIS PART)
             await conv.send_message("📩 Enter OTP:")
             otp_response = await conv.get_response()
-            code = otp_response.text.replace(' ', '') # Remove spaces if user types "123 456"
+            code = otp_response.text.replace(' ', '')
             
             try:
                 await client.sign_in(phone, code)
             except SessionPasswordNeededError:
-                # 4. Ask for 2FA Password (FIXED THIS PART TOO)
                 await conv.send_message("🔐 Enter 2FA Password:")
                 pwd_response = await conv.get_response()
                 password = pwd_response.text.strip()
                 await client.sign_in(password=password)
             
-            # 5. Success
             await register_client(user_id, client)
             await conv.send_message("✅ **Login Successful!**")
             
@@ -367,7 +355,6 @@ async def login_cmd(event):
         except Exception as e: 
             await conv.send_message(f"❌ **Error:** {e}")
             logger.error(f"Login failed: {e}")
-
 
 @bot.on(events.NewMessage(pattern='/logout'))
 async def logout_cmd(event):
@@ -387,21 +374,45 @@ async def logout_cmd(event):
 async def slot_cmd(event):
     uid = event.sender_id
     if uid not in database.clients: return await event.respond("❌ Login first.")
+    
+    # Add to queue if not present
     if uid not in database.farming_queue:
         database.farming_queue.append(uid)
         await event.respond("✅ **Added to Queue.**")
+    else:
+        await event.respond("⚠️ Already in queue.")
+    
+    # Force start worker immediately regardless of queue state
+    if not database.is_running:
         asyncio.create_task(worker.start_relay_race())
-    else: await event.respond("⚠️ Already in queue.")
 
 @bot.on(events.NewMessage(pattern='/allslot', from_users=[config.OWNER_ID]))
 async def allslot_cmd(event):
-    c = 0
+    added_count = 0
+    skipped_count = 0
+    current_time = time.time()
+    
     for uid in database.clients:
         if uid not in database.farming_queue:
-            database.farming_queue.append(uid)
-            c+=1
-    await event.respond(f"✅ **{c} bots** added to queue.")
-    asyncio.create_task(worker.start_relay_race())
+            # CHECK COOLDOWN: Only add if they are ready to play
+            user_info = database.user_data.get(uid, {})
+            next_play = user_info.get('next_play_time', 0)
+            
+            if current_time >= next_play:
+                database.farming_queue.append(uid)
+                added_count += 1
+            else:
+                skipped_count += 1
+    
+    msg = f"✅ **{added_count} bots** added to queue."
+    if skipped_count > 0:
+        msg += f"\n💤 **{skipped_count} bots** skipped (Sleeping)."
+        
+    await event.respond(msg)
+    
+    # Start worker if not running
+    if not database.is_running and added_count > 0:
+        asyncio.create_task(worker.start_relay_race())
 
 @bot.on(events.NewMessage(pattern='/stats'))
 async def stats_cmd(event):
@@ -412,6 +423,11 @@ async def stats_cmd(event):
     )
     for uid, data in database.user_data.items():
         icon = utils.format_status(uid, database.current_active_user)
+        # Optional: Show sleep time in stats
+        if time.time() < data.get('next_play_time', 0):
+            remaining = int(data['next_play_time'] - time.time())
+            icon += f" (💤 {remaining // 60}m)"
+            
         msg += f"❑ {data['name']} ‹`{uid}`› — {data['extols']} — {icon}\n"
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
