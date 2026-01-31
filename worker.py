@@ -9,10 +9,6 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-# Pattern to extract time from: "You can play again in 10h 26m 44s."
-# Added \s* to allow spaces like "12 h" or "30 s"
-COOLDOWN_PATTERN = re.compile(r"play again in\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE)
-
 async def play_user_turn(user_id):
     """
     Plays slots for ONE specific user until they hit a limit or cooldown.
@@ -51,23 +47,31 @@ async def play_user_turn(user_id):
                 
                 # --- STOP CONDITION 2: COOLDOWN MESSAGE ---
                 elif "play again in" in text:
-                    match = COOLDOWN_PATTERN.search(text)
-                    if match:
-                        h = int(match.group(1) or 0)
-                        m = int(match.group(2) or 0)
-                        s = int(match.group(3) or 0)
-                        
-                        total_seconds = (h * 3600) + (m * 60) + s
-                        # Add 30s buffer to be safe
-                        resume_time = time.time() + total_seconds + 30
-                        
-                        database.user_data[user_id]['next_play_time'] = resume_time
-                        logger.info(f"⏳ {me.first_name}: Cooldown detected. Sleeping {h}h {m}m {s}s.")
-                    else:
-                        # Fallback if regex fails but message is present
-                        logger.warning(f"⚠️ {me.first_name}: Cooldown msg found but parse failed. Defaulting to 30m.")
-                        database.user_data[user_id]['next_play_time'] = time.time() + 1800
-                        
+                    # DEBUG: Print exact text to see what is failing if it happens again
+                    # logger.info(f"DEBUG TEXT: {text}") 
+
+                    # Independent Regex Checks (Robust against bolding/formatting)
+                    # Looks for digits followed specifically by 'h', 'm', or 's'
+                    h_match = re.search(r'(\d+)\s*h', text, re.IGNORECASE)
+                    m_match = re.search(r'(\d+)\s*m', text, re.IGNORECASE)
+                    s_match = re.search(r'(\d+)\s*s', text, re.IGNORECASE)
+
+                    h = int(h_match.group(1)) if h_match else 0
+                    m = int(m_match.group(1)) if m_match else 0
+                    s = int(s_match.group(1)) if s_match else 0
+                    
+                    total_seconds = (h * 3600) + (m * 60) + s
+                    
+                    if total_seconds == 0:
+                        # Fallback: If regex fails entirely but message exists, default to 30m
+                        logger.warning(f"⚠️ {me.first_name}: Parse failed (Got 0s). Defaulting to 30 mins.")
+                        total_seconds = 1800
+
+                    # Add 30s buffer to be safe
+                    resume_time = time.time() + total_seconds + 30
+                    
+                    database.user_data[user_id]['next_play_time'] = resume_time
+                    logger.info(f"⏳ {me.first_name}: Cooldown detected. Sleeping {h}h {m}m {s}s.")
                     break
 
                 # Log successful spin
@@ -102,32 +106,22 @@ async def start_relay_race():
         current_time = time.time()
         
         # --- LOOP THROUGH QUEUE ---
-        # We create a copy of the list so we don't crash if someone logs out mid-loop
         for user_id in list(database.farming_queue):
             
-            # Skip if user data is missing (logged out)
             if user_id not in database.user_data:
                 continue
 
             # Only play if their personal cooldown timer has passed
             if current_time >= database.user_data[user_id]['next_play_time']:
                 
-                # Mark as active for stats display
                 database.current_active_user = user_id 
-                
-                # Play the turn (runs until slots empty or cooldown hit)
                 await play_user_turn(user_id)
-                
-                # Unmark active
                 database.current_active_user = None
                 active_run_found = True
         
-        # --- SLEEP LOGIC (Optimization) ---
-        # If NO one played this round, it means everyone is sleeping.
-        # We should wait until the EARLIEST wake-up time to save CPU.
+        # --- SLEEP LOGIC ---
         if not active_run_found and database.farming_queue:
-            
-            # Gather all wake-up times
+            # Calculate sleep time based on the earliest wake-up
             wake_times = []
             for uid in database.farming_queue:
                 if uid in database.user_data:
@@ -139,12 +133,10 @@ async def start_relay_race():
                 
                 if sleep_duration > 0:
                     logger.info(f"💤 All accounts resting. Next wake up in {int(sleep_duration)}s.")
-                    # Sleep until the first person is ready (+5s buffer)
                     await asyncio.sleep(sleep_duration + 5)
                 else:
                     await asyncio.sleep(5)
             else:
                 await asyncio.sleep(5)
         else:
-            # Small buffer between queue cycles
             await asyncio.sleep(5)
