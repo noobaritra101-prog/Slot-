@@ -10,7 +10,8 @@ import utils
 logger = logging.getLogger(__name__)
 
 # Pattern to extract time from: "You can play again in 10h 26m 44s."
-COOLDOWN_PATTERN = re.compile(r"play again in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?")
+# Added \s* to allow spaces like "12 h" or "30 s"
+COOLDOWN_PATTERN = re.compile(r"play again in\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE)
 
 async def play_user_turn(user_id):
     """
