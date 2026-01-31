@@ -92,7 +92,6 @@ async def load_database():
 # --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
-async def get_balance_for_user(user_id, client):
     """
     Improved balance checker with flexible regex.
     """
@@ -103,7 +102,7 @@ async def get_balance_for_user(user_id, client):
             
             if response.text:
                 # Regex looks for the number following 'extols:', 'Є', or 'balance'
-                # It handles commas like 1,234 and spaces
+                # It handles commas like 1,234 and spaces. Case-insensitive.
                 match = re.search(r'(?:extols|Є|balance)[:\s]*([\d,]+)', response.text, re.IGNORECASE)
                 
                 if match:
@@ -123,12 +122,6 @@ async def get_balance_for_user(user_id, client):
         return ("Timeout", 0, "Target bot didn't reply.")
     except Exception as e:
         logger.error(f"Audit error for {user_id}: {e}")
-        return ("Error", 0, str(e))
-
-    
-    except asyncio.TimeoutError:
-        return ("Timeout", 0, "Response took too long.")
-    except Exception as e:
         return ("Error", 0, str(e))
 
 async def register_client(uid, client):
