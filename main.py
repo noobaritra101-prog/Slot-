@@ -39,7 +39,7 @@ async def get_balance_for_user(user_id, client):
         await client.send_message(config.TARGET_BOT, '/extols')
         
         # 2. Look for the specific response (Retries for 5 seconds)
-        for _ in range(5):
+        for _ in range(10):
             await asyncio.sleep(3) # Wait for reply
             
             # Read last 3 messages to avoid missing it if a slot msg came in simultaneously
