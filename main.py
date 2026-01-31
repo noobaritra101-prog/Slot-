@@ -432,7 +432,6 @@ async def stats_cmd(event):
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
 # --- LOGGING COMMANDS ---
-# --- LOGGING COMMANDS ---
 
 @bot.on(events.NewMessage(pattern='/log', from_users=[config.OWNER_ID]))
 async def log_cmd(event):
@@ -523,7 +522,13 @@ async def log_dl(event):
     else:
         await event.answer("❌ Log file does not exist.", alert=True)
 
-
+# Session Export/Import
+@bot.on(events.NewMessage(pattern='/sessionexport', from_users=[config.OWNER_ID]))
+async def sexport(e):
+    d = database.get_all_sessions()
+    with open(config.SESSION_FILE, 'w') as f: json.dump(d, f)
+    await e.client.send_file(e.chat_id, config.SESSION_FILE)
+    os.remove(config.SESSION_FILE)
 
 @bot.on(events.NewMessage(pattern='/sessionimport', from_users=[config.OWNER_ID]))
 async def simport(e):
