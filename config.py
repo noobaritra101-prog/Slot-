@@ -10,7 +10,7 @@ API_HASH = "5a2684512006853f2e48aca9652d83ea"     # Replace with your API Hash (
 BOT_TOKEN = "8504517756:AAERpkSmmhxolu5lgc_VNgL-vJiGHUj3coE"   # Replace with your Bot Token
 
 # Your Numeric Telegram ID (Use @userinfobot to find it)
-OWNER_ID = 572621020           # Replace with your Admin ID
+OWNER_ID = 5716292610           # Replace with your Admin ID
 
 # --- TARGETS ---
 TARGET_BOT = "@roronoa_zoro_robot"
