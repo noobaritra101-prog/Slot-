@@ -175,25 +175,43 @@ async def register_client(uid, client):
 
 @bot.on(events.NewMessage(pattern='/help'))
 async def help_cmd(event):
-    text = (
-        "🛠 **COMMAND MENU**\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "**🔑 Login:**\n"
-        "`/login` - Phone + OTP Login\n"
-        "`/slogin` - String Session Login\n"
-        "`/logout` - Disconnect\n\n"
-        "**💰 Finance:**\n"
-        "`/check` - Audit Wallets\n"
-        "`/self_reply {all|id} {group_id} {amount}`\n\n"
-        "**⚙️ System:**\n"
-        "`/update` - Pull & Restart (Keeps Logins)\n"
-        "`/slot` - Join Queue\n"
-        "`/allslot` - Start All\n"
-        "`/stats` - Global Stats\n"
-        "`/log` - Logs\n"
-        "━━━━━━━━━━━━━━━━"
+    # --- 1. Define the USER Menu (Visible to everyone) ---
+    user_text = (
+        "⎔ **USER HELP MENU**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "➤ **Session Management**\n"
+        "» `/login` - Phone + OTP Login\n"
+        "» `/slogin` - String Session Login\n"
+        "» `/logout` - Disconnect & Delete Session\n\n"
+        "➤ **Activity**\n"
+        "» `/slot` - Join Farming Queue\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
-    await event.respond(text)
+
+    # --- 2. Define the ADMIN Menu (Visible only to Owner) ---
+    if event.sender_id == config.OWNER_ID:
+        admin_text = (
+            "⎔ **ADMIN DASHBOARD**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "➤ **Finance & Audit**\n"
+            "» `/check` - Audit All Wallets\n"
+            "» `/self_reply` - Transfer Funds (Reply)\n\n"
+            "➤ **System Controls**\n"
+            "» `/stats` - Global Stats & Queue\n"
+            "» `/update` - Pull & Restart\n"
+            "» `/log` - View System Logs\n"
+            "» `/allslot` - Force Start All\n\n"
+            "➤ **Database**\n"
+            "» `/sessionexport` - Backup Sessions\n"
+            "» `/sessionimport` - Restore Sessions\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        # Combine Admin + User text for the Owner
+        await event.respond(admin_text + user_text)
+    else:
+        # Show only User text for others
+        await event.respond(user_text)
+
 
 # --- UPDATE COMMAND ---
 
