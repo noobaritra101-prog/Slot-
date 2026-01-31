@@ -92,27 +92,39 @@ async def load_database():
 # --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
+async def get_balance_for_user(user_id, client):
     """
-    Robust balance checker using conversation to wait for exact response.
+    Improved balance checker with flexible regex.
     """
     try:
-        async with client.conversation(config.TARGET_BOT, timeout=30) as conv:  # Added timeout to prevent hanging
+        async with client.conversation(config.TARGET_BOT, timeout=30) as conv:
             await conv.send_message('/extols')
             response = await conv.get_response()
             
             if response.text:
-                # Look for the symbol Є or the word 'extols'
-                if "Є" in response.text or "extols" in response.text.lower():
-                    match = re.search(r'Є\s*([\d,]+)', response.text)
+                # Regex looks for the number following 'extols:', 'Є', or 'balance'
+                # It handles commas like 1,234 and spaces
+                match = re.search(r'(?:extols|Є|balance)[:\s]*([\d,]+)', response.text, re.IGNORECASE)
+                
+                if match:
+                    balance_str = match.group(1).replace(',', '')
+                    balance = int(balance_str)
                     
-                    if match:
-                        balance_str = match.group(1).replace(',', '')
-                        balance = int(balance_str)
+                    me = await client.get_me()
+                    # Update local database so /stats is also accurate
+                    if user_id in database.user_data:
+                        database.user_data[user_id]['extols'] = balance
                         
-                        me = await client.get_me()
-                        return (me.first_name, balance, None)
+                    return (me.first_name, balance, None)
             
-            return ("Unknown", 0, "Bot did not reply with balance.")
+            return ("Unknown", 0, "Balance not found in text.")
+    
+    except asyncio.TimeoutError:
+        return ("Timeout", 0, "Target bot didn't reply.")
+    except Exception as e:
+        logger.error(f"Audit error for {user_id}: {e}")
+        return ("Error", 0, str(e))
+
     
     except asyncio.TimeoutError:
         return ("Timeout", 0, "Response took too long.")
