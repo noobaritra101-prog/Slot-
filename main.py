@@ -92,34 +92,28 @@ async def load_database():
 # --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
-    """
-    Robust balance checker that waits for the bot reply instead of scanning history.
-    """
     try:
-        # Send command
-        await client.send_message(config.TARGET_BOT, '/extols')
+        async with client.conversation(config.TARGET_BOT, timeout=12) as conv:
+            
+            # Send command
+            await conv.send_message('/extols')
 
-        # Wait for response from the target bot
-        try:
-            response = await client.wait_for(
-                events.NewMessage(
-                    from_users=config.TARGET_BOT
-                ),
-                timeout=10
-            )
-        except asyncio.TimeoutError:
-            return ("Timeout", 0, "Bot did not reply in time.")
+            # Wait for reply
+            response = await conv.get_response()
 
-        text = response.text or ""
+            text = response.text or ""
 
-        # Extract balance
-        match = re.search(r'Є\s*([\d,]+)', text)
-        if match:
-            balance = int(match.group(1).replace(',', ''))
-            me = await client.get_me()
-            return (me.first_name, balance, None)
+            # Extract balance
+            match = re.search(r'Є\s*([\d,]+)', text)
+            if match:
+                balance = int(match.group(1).replace(',', ''))
+                me = await client.get_me()
+                return (me.first_name, balance, None)
 
-        return ("Unknown", 0, "No balance found in reply.")
+            return ("Unknown", 0, "Balance not found.")
+
+    except asyncio.TimeoutError:
+        return ("Timeout", 0, "Bot did not reply.")
 
     except Exception as e:
         return ("Error", 0, str(e))
