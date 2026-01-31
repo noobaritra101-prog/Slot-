@@ -432,20 +432,21 @@ async def stats_cmd(event):
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
 # --- LOGGING COMMANDS ---
+# --- LOGGING COMMANDS ---
 
 @bot.on(events.NewMessage(pattern='/log', from_users=[config.OWNER_ID]))
 async def log_cmd(event):
-    """Fetches and displays the system logs."""
+    """Fetches and displays the last 15 lines of the system logs."""
     if not os.path.exists(config.LOG_FILE):
         return await event.respond("❌ **No Log File Found.**")
 
     try:
-        # Read the file
         with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+            lines = f.readlines()
         
-        # Slice the last 3500 characters to fit in Telegram's limit (4096)
-        logs = content[-3500:] if len(content) > 3500 else content
+        # Get only the last 15 lines
+        last_lines = lines[-15:]
+        logs = "".join(last_lines)
         
         # Sanitize logs: replace backticks to prevent markdown errors
         logs = logs.replace('`', "'")
@@ -458,7 +459,7 @@ async def log_cmd(event):
             [Button.inline("Clear 🗑️", b"log_clear")]
         ]
         
-        await event.respond(f"📝 **System Logs:**\n```\n{logs}\n```", buttons=buttons)
+        await event.respond(f"📝 **System Logs (Last 15 Lines):**\n```\n{logs}\n```", buttons=buttons)
     except Exception as e:
         await event.respond(f"❌ **Error reading logs:** `{e}`")
 
@@ -469,22 +470,27 @@ async def log_ref(event):
 
     try:
         with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+            lines = f.readlines()
         
-        # Slice last 3500 chars
-        logs = content[-3500:] if len(content) > 3500 else content
+        # Get only the last 15 lines
+        last_lines = lines[-15:]
+        logs = "".join(last_lines)
+        
         logs = logs.replace('`', "'")
         
         if not logs.strip():
             logs = "Log file is empty."
 
-        new_text = f"📝 **System Logs:**\n```\n{logs}\n```"
+        new_text = f"📝 **System Logs (Last 15 Lines):**\n```\n{logs}\n```"
         
-        # FIX: Check if text changed. If same, show Alert instead of Edit.
-        if event.message.text.strip() == new_text.strip():
+        # FIX: Use get_message() to avoid AttributeError
+        msg = await event.get_message()
+        
+        # Check if text changed
+        if msg.text.strip() == new_text.strip():
             await event.answer("✅ Logs are already up to date.", alert=True)
         else:
-            await event.edit(new_text, buttons=event.message.buttons)
+            await event.edit(new_text, buttons=msg.buttons)
             await event.answer("🔄 Refreshed!")
             
     except Exception as e:
@@ -516,6 +522,7 @@ async def log_dl(event):
         )
     else:
         await event.answer("❌ Log file does not exist.", alert=True)
+
 
 
 @bot.on(events.NewMessage(pattern='/sessionimport', from_users=[config.OWNER_ID]))
