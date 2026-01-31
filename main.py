@@ -40,7 +40,7 @@ async def get_balance_for_user(user_id, client):
         
         # 2. Look for the specific response (Retries for 5 seconds)
         for _ in range(5):
-            await asyncio.sleep(1.5) # Wait for reply
+            await asyncio.sleep(3) # Wait for reply
             
             # Read last 3 messages to avoid missing it if a slot msg came in simultaneously
             messages = await client.get_messages(config.TARGET_BOT, limit=3)
