@@ -92,29 +92,30 @@ async def load_database():
 # --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
+    """
+    Robust balance checker using conversation to wait for exact response.
+    """
     try:
-        async with client.conversation(config.TARGET_BOT, timeout=12) as conv:
-            
-            # Send command
+        async with client.conversation(config.TARGET_BOT, timeout=30) as conv:  # Added timeout to prevent hanging
             await conv.send_message('/extols')
-
-            # Wait for reply
             response = await conv.get_response()
-
-            text = response.text or ""
-
-            # Extract balance
-            match = re.search(r'Є\s*([\d,]+)', text)
-            if match:
-                balance = int(match.group(1).replace(',', ''))
-                me = await client.get_me()
-                return (me.first_name, balance, None)
-
-            return ("Unknown", 0, "Balance not found.")
-
+            
+            if response.text:
+                # Look for the symbol Є or the word 'extols'
+                if "Є" in response.text or "extols" in response.text.lower():
+                    match = re.search(r'Є\s*([\d,]+)', response.text)
+                    
+                    if match:
+                        balance_str = match.group(1).replace(',', '')
+                        balance = int(balance_str)
+                        
+                        me = await client.get_me()
+                        return (me.first_name, balance, None)
+            
+            return ("Unknown", 0, "Bot did not reply with balance.")
+    
     except asyncio.TimeoutError:
-        return ("Timeout", 0, "Bot did not reply.")
-
+        return ("Timeout", 0, "Response took too long.")
     except Exception as e:
         return ("Error", 0, str(e))
 
