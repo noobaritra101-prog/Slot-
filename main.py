@@ -306,29 +306,49 @@ async def login_cmd(event):
     user_id = event.sender_id
     async with bot.conversation(user_id, timeout=300) as conv:
         try:
+            # 1. Ask for Phone Number
             await conv.send_message("📱 **Phone Login**\nEnter phone number (e.g. `+91...`):")
-            phone = (await conv.get_response()).text.strip()
+            phone_response = await conv.get_response()
+            phone = phone_response.text.strip()
             
+            # 2. Send Code Request
             msg = await conv.send_message("🔄 Sending OTP...")
             client = TelegramClient(StringSession(), config.API_ID, config.API_HASH)
             await client.connect()
             
-            try: await client.send_code_request(phone)
-            except Exception as e: return await msg.edit(f"❌ Error: {e}")
+            try: 
+                await client.send_code_request(phone)
+            except Exception as e: 
+                return await msg.edit(f"❌ Error sending OTP: {e}")
             
             await msg.delete()
-            code = (await conv.send_message("📩 Enter OTP:")).get_response()
-            code = (await code).text.replace(' ', '')
+
+            # 3. Ask for OTP (FIXED THIS PART)
+            await conv.send_message("📩 Enter OTP:")
+            otp_response = await conv.get_response()
+            code = otp_response.text.replace(' ', '') # Remove spaces if user types "123 456"
             
             try:
                 await client.sign_in(phone, code)
             except SessionPasswordNeededError:
-                pwd = (await conv.send_message("🔐 Enter 2FA Password:")).get_response()
-                await client.sign_in(password=(await pwd).text)
+                # 4. Ask for 2FA Password (FIXED THIS PART TOO)
+                await conv.send_message("🔐 Enter 2FA Password:")
+                pwd_response = await conv.get_response()
+                password = pwd_response.text.strip()
+                await client.sign_in(password=password)
             
+            # 5. Success
             await register_client(user_id, client)
             await conv.send_message("✅ **Login Successful!**")
-        except Exception as e: await conv.send_message(f"❌ Error: {e}")
+            
+        except asyncio.TimeoutError:
+            await conv.send_message("❌ **Timeout:** You took too long to reply.")
+        except PhoneCodeInvalidError:
+            await conv.send_message("❌ **Error:** The OTP you entered is invalid.")
+        except Exception as e: 
+            await conv.send_message(f"❌ **Error:** {e}")
+            logger.error(f"Login failed: {e}")
+
 
 @bot.on(events.NewMessage(pattern='/logout'))
 async def logout_cmd(event):
