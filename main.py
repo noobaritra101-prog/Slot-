@@ -93,37 +93,33 @@ async def load_database():
 
 async def get_balance_for_user(user_id, client):
     """
-    Robust balance checker that finds 'Є' amounts.
+    Robust balance checker that waits for the bot reply instead of scanning history.
     """
     try:
-        # 1. Send Command (No conversation lock)
+        # Send command
         await client.send_message(config.TARGET_BOT, '/extols')
-        
-        # 2. Wait slightly for reply
-        await asyncio.sleep(2)
-        
-        # 3. Scan the last 5 messages to find the specific reply
-        messages = await client.get_messages(config.TARGET_BOT, limit=5)
-        
-        for msg in messages:
-            if msg.text:
-                # Look for the symbol Є or the word 'extols'
-                if "Є" in msg.text or "extols" in msg.text.lower():
-                    # Regex explanation:
-                    # Є       -> Matches the symbol
-                    # \s* -> Matches zero or more spaces (in case there's a space like Є 481)
-                    # ([\d,]+)-> Matches numbers and commas (captures 481 or 1,000)
-                    match = re.search(r'Є\s*([\d,]+)', msg.text)
-                    
-                    if match:
-                        # Remove commas and convert to int
-                        balance_str = match.group(1).replace(',', '')
-                        balance = int(balance_str)
-                        
-                        me = await client.get_me()
-                        return (me.first_name, balance, None)
-        
-        return ("Unknown", 0, "Bot did not reply with balance.")
+
+        # Wait for response from the target bot
+        try:
+            response = await client.wait_for(
+                events.NewMessage(
+                    from_users=config.TARGET_BOT
+                ),
+                timeout=10
+            )
+        except asyncio.TimeoutError:
+            return ("Timeout", 0, "Bot did not reply in time.")
+
+        text = response.text or ""
+
+        # Extract balance
+        match = re.search(r'Є\s*([\d,]+)', text)
+        if match:
+            balance = int(match.group(1).replace(',', ''))
+            me = await client.get_me()
+            return (me.first_name, balance, None)
+
+        return ("Unknown", 0, "No balance found in reply.")
 
     except Exception as e:
         return ("Error", 0, str(e))
