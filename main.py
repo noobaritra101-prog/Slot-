@@ -310,7 +310,7 @@ async def slogin_cmd(event):
             await client.connect()
             if not await client.is_user_authorized(): return await conv.send_message("❌ Invalid.")
             await register_client(event.sender_id, client)
-            await conv.send_message("✅ Connected!")
+            await conv.send_message("Session sting Connected successfully !!")
         except Exception as e: await conv.send_message(f"Error: {e}")
 
 @bot.on(events.NewMessage(pattern='/login'))
@@ -333,20 +333,20 @@ async def login_cmd(event):
             
             await msg.delete()
 
-            await conv.send_message("📩 Enter OTP:")
+            await conv.send_message("📩 Enter your OTP (format 1 2 3 4 5):")
             otp_response = await conv.get_response()
             code = otp_response.text.replace(' ', '')
             
             try:
                 await client.sign_in(phone, code)
             except SessionPasswordNeededError:
-                await conv.send_message("🔐 Enter 2FA Password:")
+                await conv.send_message("🔐 Enter your 2FA Password:")
                 pwd_response = await conv.get_response()
                 password = pwd_response.text.strip()
                 await client.sign_in(password=password)
             
             await register_client(user_id, client)
-            await conv.send_message("✅ **Login Successful!**")
+            await conv.send_message("**✨ Login Successful! Let’s Go**")
             
         except asyncio.TimeoutError:
             await conv.send_message("❌ **Timeout:** You took too long to reply.")
@@ -366,7 +366,7 @@ async def logout_cmd(event):
         if uid in database.farming_queue: database.farming_queue.remove(uid)
         
         save_database()
-        await event.respond("✅ **Logged out.**")
+        await event.respond("**Signed out — come back soon!**")
 
 # --- FARMING & STATS ---
 
@@ -428,7 +428,7 @@ async def stats_cmd(event):
             remaining = int(data['next_play_time'] - time.time())
             icon += f" (💤 {remaining // 60}m)"
             
-        msg += f"❑ {data['name']} ‹`{uid}`› — {data['extols']} — {icon}\n"
+        msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}```\n"
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
 @bot.on(events.NewMessage(pattern='/log', from_users=[config.OWNER_ID]))
