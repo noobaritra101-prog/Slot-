@@ -431,32 +431,92 @@ async def stats_cmd(event):
         msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}```\n"
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
+# --- LOGGING COMMANDS ---
+
 @bot.on(events.NewMessage(pattern='/log', from_users=[config.OWNER_ID]))
 async def log_cmd(event):
-    logs = utils.read_last_logs(config.LOG_FILE)
-    buttons = [
-        [Button.inline("Refresh 🌀", b"log_refresh"), Button.inline("Download ⬇️", b"log_download")],
-        [Button.inline("Clear 🗑️", b"log_clear")]
-    ]
-    await event.respond(f"📝 **System Logs:**\n```\n{logs}\n```", buttons=buttons)
+    """Fetches and displays the system logs."""
+    if not os.path.exists(config.LOG_FILE):
+        return await event.respond("❌ **No Log File Found.**")
 
-# Callbacks for logs
+    try:
+        # Read the file
+        with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        
+        # Slice the last 3500 characters to fit in Telegram's limit (4096)
+        logs = content[-3500:] if len(content) > 3500 else content
+        
+        # Sanitize logs: replace backticks to prevent markdown errors
+        logs = logs.replace('`', "'")
+        
+        if not logs.strip():
+            logs = "Log file is empty."
+
+        buttons = [
+            [Button.inline("Refresh 🌀", b"log_refresh"), Button.inline("Download ⬇️", b"log_download")],
+            [Button.inline("Clear 🗑️", b"log_clear")]
+        ]
+        
+        await event.respond(f"📝 **System Logs:**\n```\n{logs}\n```", buttons=buttons)
+    except Exception as e:
+        await event.respond(f"❌ **Error reading logs:** `{e}`")
+
 @bot.on(events.CallbackQuery(pattern=b'log_refresh'))
-async def log_ref(e): await e.edit(f"📝 **System Logs:**\n```\n{utils.read_last_logs(config.LOG_FILE)}\n```", buttons=e.message.buttons)
-@bot.on(events.CallbackQuery(pattern=b'log_clear'))
-async def log_clr(e): 
-    utils.clear_logs(config.LOG_FILE)
-    await e.edit("🗑️ Logs Cleared.", buttons=[[Button.inline("Refresh 🌀", b"log_refresh")]])
-@bot.on(events.CallbackQuery(pattern=b'log_download'))
-async def log_dl(e): await e.client.send_file(e.chat_id, config.LOG_FILE) if os.path.exists(config.LOG_FILE) else await e.answer("No logs.")
+async def log_ref(event):
+    if not os.path.exists(config.LOG_FILE):
+        return await event.answer("❌ No log file found.", alert=True)
 
-# Session Export/Import
-@bot.on(events.NewMessage(pattern='/sessionexport', from_users=[config.OWNER_ID]))
-async def sexport(e):
-    d = database.get_all_sessions()
-    with open(config.SESSION_FILE, 'w') as f: json.dump(d, f)
-    await e.client.send_file(e.chat_id, config.SESSION_FILE)
-    os.remove(config.SESSION_FILE)
+    try:
+        with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        
+        # Slice last 3500 chars
+        logs = content[-3500:] if len(content) > 3500 else content
+        logs = logs.replace('`', "'")
+        
+        if not logs.strip():
+            logs = "Log file is empty."
+
+        new_text = f"📝 **System Logs:**\n```\n{logs}\n```"
+        
+        # FIX: Check if text changed. If same, show Alert instead of Edit.
+        if event.message.text.strip() == new_text.strip():
+            await event.answer("✅ Logs are already up to date.", alert=True)
+        else:
+            await event.edit(new_text, buttons=event.message.buttons)
+            await event.answer("🔄 Refreshed!")
+            
+    except Exception as e:
+        await event.answer(f"Error: {e}", alert=True)
+
+@bot.on(events.CallbackQuery(pattern=b'log_clear'))
+async def log_clr(event):
+    try:
+        # Open in 'w' mode to wipe content
+        with open(config.LOG_FILE, "w") as f:
+            f.write("")
+        
+        empty_text = "📝 **System Logs:**\n```\nLogs Cleared.\n```"
+        buttons = [[Button.inline("Refresh 🌀", b"log_refresh")]]
+        
+        await event.edit(empty_text, buttons=buttons)
+        await event.answer("🗑️ Logs deleted.")
+    except Exception as e:
+        await event.answer(f"Error clearing: {e}", alert=True)
+
+@bot.on(events.CallbackQuery(pattern=b'log_download'))
+async def log_dl(event):
+    if os.path.exists(config.LOG_FILE):
+        await event.answer("⬇️ Sending file...")
+        await event.client.send_file(
+            event.chat_id, 
+            config.LOG_FILE, 
+            caption=f"**System Logs**\n📅 {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+    else:
+        await event.answer("❌ Log file does not exist.", alert=True)
+
 
 @bot.on(events.NewMessage(pattern='/sessionimport', from_users=[config.OWNER_ID]))
 async def simport(e):
