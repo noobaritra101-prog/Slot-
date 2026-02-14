@@ -9,6 +9,10 @@ import time
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+from telethon.tl.types import (
+    ReplyInlineMarkup, 
+    KeyboardButtonRow, 
+    KeyboardButtonCallback
 
 import config
 import database
