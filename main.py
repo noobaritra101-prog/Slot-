@@ -9,10 +9,6 @@ import time
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
-from telethon.tl.types import (
-    ReplyInlineMarkup, 
-    KeyboardButtonRow, 
-    KeyboardButtonCallback
 
 import config
 import database
@@ -457,24 +453,13 @@ async def log_cmd(event):
         if not logs.strip():
             logs = "Log file is empty."
 
-        buttons = ReplyInlineMarkup(
-    rows=[
-        KeyboardButtonRow(
-            buttons=[
-                # style="primary" -> Blue 🔵
-                KeyboardButtonCallback(text="Refresh 🌀", data=b"log_refresh", style="primary"),
-                # style="primary" -> Blue 🔵
-                KeyboardButtonCallback(text="Download ⬇️", data=b"log_download", style="primary")
-            ]
-        ),
-        KeyboardButtonRow(
-            buttons=[
-                # style="danger" -> Red 🔴
-                KeyboardButtonCallback(text="Clear 🗑️", data=b"log_clear", style="danger")
-            ]
-        )
-    ]
-)
+        Buttons = [
+    [
+        Button.inline("Refresh 🌀", b"log_refresh"), 
+        Button.inline("Download ⬇️", b"log_download")
+    ],
+    [Button.inline("Clear 🗑️", b"log_clear")] 
+        ]
         
         await event.respond(f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ』**\n```\n{logs}\n```", buttons=buttons)
     except Exception as e:
