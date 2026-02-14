@@ -454,8 +454,11 @@ async def log_cmd(event):
             logs = "Log file is empty."
 
         buttons = [
-            [Button.inline("Refresh 🌀", b"log_refresh"), Button.inline("Download ⬇️", b"log_download")],
-            [Button.inline("Clear 🗑️", b"log_clear")]
+        [
+            Button.inline("Refresh 🌀", b"log_refresh", color='blue'), 
+            Button.inline("Download ⬇️", b"log_download", color='blue')
+        ],
+        [Button.inline("Clear 🗑️", b"log_clear", color='red')]
         ]
         
         await event.respond(f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ』**\n```\n{logs}\n```", buttons=buttons)
