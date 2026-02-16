@@ -453,14 +453,12 @@ async def log_cmd(event):
         if not logs.strip():
             logs = "Log file is empty."
 
-        Buttons = [
-        Button.inline("Refresh 🌀", b"log_refresh"), 
-        Button.inline("Download ⬇️", b"log_download")
-    ],
-    [Button.inline("Clear 🗑️", b"log_clear")] 
+        buttons = [
+            [Button.inline("Refresh 🌀", b"log_refresh"), Button.inline("Download ⬇️", b"log_download")],
+            [Button.inline("Clear 🗑️", b"log_clear")]
         ]
         
-        await event.respond(f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ』**\n```\n{logs}\n```", buttons=buttons)
+        await event.respond(f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ**\n```\n{logs}\n```", buttons=buttons)
     except Exception as e:
         await event.respond(f"❌ **Error reading logs:** `{e}`")
 
@@ -482,7 +480,7 @@ async def log_ref(event):
         if not logs.strip():
             logs = "Log file is empty."
 
-        new_text = f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ』**\n```\n{logs}\n```"
+        new_text = f"🖥️ **𝗦ʏꜱᴛᴇᴍ 𝗟ᴏɢꜱ 『𝗟ᴀꜱᴛ 15 𝗟ɪɴᴇꜱ**\n```\n{logs}\n```"
         
         # FIX: Use get_message() to avoid AttributeError
         msg = await event.get_message()
