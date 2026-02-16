@@ -454,7 +454,6 @@ async def log_cmd(event):
             logs = "Log file is empty."
 
         Buttons = [
-    [
         Button.inline("Refresh 🌀", b"log_refresh"), 
         Button.inline("Download ⬇️", b"log_download")
     ],
