@@ -428,8 +428,8 @@ async def stats_cmd(event):
             remaining = int(data['next_play_time'] - time.time())
             icon += f" (💤 {remaining // 60}m)"
             
-        msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}\n"
-    await event.respond(msg + "━━━━━━━━━━━━━━━━```")
+        msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}```\n"
+    await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
 # --- LOGGING COMMANDS ---
 
