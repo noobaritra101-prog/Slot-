@@ -188,7 +188,7 @@ async def help_cmd(event):
 
     if event.sender_id == config.OWNER_ID:
         admin_text = (
-            "❖ **ADMIN DASHBOARD**\n"
+            "❖ **ADMIN DASHBOARD** <tg-emoji emoji-id='6330146053244853999'>🪲</tg-emoji>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "◆ **Finance & Audit**\n"
             "◇ `/check` - Audit All Wallets\n"
@@ -203,7 +203,7 @@ async def help_cmd(event):
             "◇ `/sessionimport` - Restore Sessions\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
         )
-        await event.respond(admin_text + user_text)
+        await event.respond(admin_text + user_text, parse_mode='html')
     else:
         await event.respond(user_text)
 
@@ -241,7 +241,7 @@ async def check_cmd(event):
     results = await asyncio.gather(*tasks)
     
     total_extols = 0
-    msg = "💰 **WALLET AUDIT**\n━━━━━━━━━━━━━━━━\n"
+    msg = "💰 **WALLET AUDIT** <tg-emoji emoji-id='6330094878709520814'>☣️</tg-emoji>\n━━━━━━━━━━━━━━━━\n"
     
     for name, balance, error in results:
         if error:
@@ -252,7 +252,7 @@ async def check_cmd(event):
             
     msg += f"━━━━━━━━━━━━━━━━\n➤ **Total - Є{total_extols}**"
     
-    await status_msg.edit(msg)
+    await status_msg.edit(msg, parse_mode='html')
 
 # --- SELF REPLY COMMAND ---
 
@@ -418,7 +418,7 @@ async def allslot_cmd(event):
 async def stats_cmd(event):
     msg = (
         f"🌍 **GLOBAL STATS**\n━━━━━━━━━━━━━━━━\n"
-        f"👥 Users: {len(database.clients)} | 🔥 Queue: {len(database.farming_queue)}\n"
+        f"👥 Users: {len(database.clients)} | <tg-emoji emoji-id='6329851762085731491'>🔥</tg-emoji> Queue: {len(database.farming_queue)}\n"
         f"⏳ Uptime: {utils.get_uptime()}\n\n"
     )
     for uid, data in database.user_data.items():
@@ -429,7 +429,7 @@ async def stats_cmd(event):
             icon += f" (💤 {remaining // 60}m)"
             
         msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}```\n"
-    await event.respond(msg + "━━━━━━━━━━━━━━━━")
+    await event.respond(msg + "━━━━━━━━━━━━━━━━", parse_mode='html')
 
 # --- LOGGING COMMANDS ---
 
@@ -543,7 +543,7 @@ async def simport(e):
         await e.respond("✅ Imported.")
         os.remove(f)
     except Exception as x: await e.respond(f"Error: {x}")
-
+    
 # --- STARTUP ---
 print("✅ Manager Bot Started...")
 bot.loop.run_until_complete(load_database())
