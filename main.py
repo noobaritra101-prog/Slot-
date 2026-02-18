@@ -232,16 +232,40 @@ async def update_cmd(event):
 
 @bot.on(events.NewMessage(pattern='/check', from_users=[config.OWNER_ID]))
 async def check_cmd(event):
-    status_msg = await event.respond("⏳ **Auditing Wallets...**\nChecking balances (this takes a few seconds)...")
+    if not database.clients:
+        return await event.respond("❌ **No accounts connected to audit.**")
+
+    # Initial message
+    status_msg = await event.respond("⏳ **Starting Wallet Audit...**")
     
-    tasks = []
-    for uid, client in database.clients.items():
-        tasks.append(get_balance_for_user(uid, client))
+    total_clients = len(database.clients)
+    results = []
     
-    results = await asyncio.gather(*tasks)
-    
+    for i, (uid, client) in enumerate(database.clients.items(), 1):
+        # 1. Update the Progress Bar animation
+        percentage = int((i / total_clients) * 100)
+        filled_blocks = int((i / total_clients) * 10)
+        bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
+        
+        user_info = database.user_data.get(uid, {})
+        name = user_info.get('name', 'Unknown')
+
+        await status_msg.edit(
+            f"Scanning 🔍\n"
+            f"`{bar}` {percentage}%\n"
+            f"Checking **{name}**..."
+        )
+
+        # 2. Perform the actual balance check
+        res = await get_balance_for_user(uid, client)
+        results.append(res)
+        
+        # Small sleep to prevent Telegram's "Message Not Modified" or Flood errors
+        await asyncio.sleep(0.5)
+
+    # 3. Final Result Construction
     total_extols = 0
-    msg = "💰 **WALLET AUDIT**\n━━━━━━━━━━━━━━━━\n"
+    msg = "💰 **WALLET AUDIT COMPLETE**\n━━━━━━━━━━━━━━━━\n"
     
     for name, balance, error in results:
         if error:
@@ -253,6 +277,8 @@ async def check_cmd(event):
     msg += f"━━━━━━━━━━━━━━━━\n➤ **Total - Є{total_extols}**"
     
     await status_msg.edit(msg)
+    
+
 
 # --- SELF REPLY COMMAND ---
 
