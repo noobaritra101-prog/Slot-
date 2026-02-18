@@ -282,47 +282,75 @@ async def check_cmd(event):
 
 # --- SELF REPLY COMMAND ---
 
-@bot.on(events.NewMessage(pattern=r'/self_reply (all|(?:\d+)) (-?\d+) (\d+)', from_users=[config.OWNER_ID]))
+@bot.on(events.NewMessage(pattern=r'/self_reply', from_users=[config.OWNER_ID]))
 async def self_reply_cmd(event):
     if not event.is_reply:
-        return await event.respond("❌ **Error:** Reply to a message.")
-    
-    target_mode = event.pattern_match.group(1) 
-    group_id = int(event.pattern_match.group(2))
-    amount = int(event.pattern_match.group(3))
+        return await event.respond("❌ **Error:** Reply to the target message in the group.")
     
     reply_msg = await event.get_reply_message()
+    group_id = event.chat_id  # Automatically uses the group where command is sent
     target_msg_id = reply_msg.id
     
-    active_clients = []
-    if target_mode == 'all':
-        active_clients = list(database.clients.values())
-    else:
-        uid = int(target_mode)
-        if uid in database.clients:
-            active_clients = [database.clients[uid]]
+    # Filter out the Owner's ID from the transfer list
+    active_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
     
-    if not active_clients:
-        return await event.respond("❌ No clients found.")
+    if not active_uids:
+        return await event.respond("❌ No worker accounts found (Owner excluded).")
 
-    await event.respond(f"💸 **Sending Funds...**\nTarget: `{group_id}` | Amount: Є{amount}\nDelay: 2s per bot")
+    status_msg = await event.respond("🔄 **Initializing Mass Transfer...**")
+    
+    total_bots = len(active_uids)
+    success_count = 0
+    total_given = 0
 
-    count = 0
-    for client in active_clients:
+    for i, uid in enumerate(active_uids, 1):
+        client = database.clients[uid]
+        user_info = database.user_data.get(uid, {})
+        name = user_info.get('name', 'Unknown')
+
+        # 1. Animation & Progress
+        percentage = int((i / total_bots) * 100)
+        bar = "▰" * (percentage // 10) + "▱" * (10 - (percentage // 10))
+        
+        await status_msg.edit(
+            f"🚀 **Transferring Funds**\n"
+            f"`{bar}` {percentage}%\n"
+            f"Processing: **{name}**"
+        )
+
         try:
-            cmd_text = f"/give@{config.TARGET_BOT_USERNAME} {amount}"
+            # 2. Fetch latest balance first
+            name_check, balance, error = await get_balance_for_user(uid, client)
+            
+            if error or balance <= 0:
+                logger.info(f"Skipping {name}: Balance is 0 or error.")
+                continue
+
+            # 3. Send the /give command
+            cmd_text = f"/give@{config.TARGET_BOT_USERNAME} {balance}"
             await client.send_message(
                 entity=group_id,
                 message=cmd_text,
                 reply_to=target_msg_id
             )
-            count += 1
-            await asyncio.sleep(2) 
+            
+            success_count += 1
+            total_given += balance
+            
+            # 4. Enforce 3-second delay between users
+            await asyncio.sleep(3) 
             
         except Exception as e:
-            logger.error(f"Transfer failed: {e}")
-            
-    await event.respond(f"✅ **Done.** Triggered {count} bots.")
+            logger.error(f"Transfer failed for {name}: {e}")
+
+    # Final Summary
+    await status_msg.edit(
+        f"✅ **Mass Transfer Complete**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💰 Total Sent: Є{total_given}\n"
+        f"🤖 Bots Triggered: {success_count}/{total_bots}\n"
+        f"📍 Group: `{group_id}`"
+    )
 
 # --- LOGIN / SLOGIN / LOGOUT ---
 
