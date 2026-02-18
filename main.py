@@ -235,48 +235,54 @@ async def check_cmd(event):
     if not database.clients:
         return await event.respond("❌ **No accounts connected to audit.**")
 
-    # Initial message
-    status_msg = await event.respond("⏳ **Starting Wallet Audit...**")
+    status_msg = await event.respond("⏳ **Initializing Batch Audit...**")
     
-    total_clients = len(database.clients)
+    all_uids = list(database.clients.keys())
+    total_clients = len(all_uids)
     results = []
     
-    for i, (uid, client) in enumerate(database.clients.items(), 1):
-        # 1. Update the Progress Bar animation
-        percentage = int((i / total_clients) * 100)
-        filled_blocks = int((i / total_clients) * 10)
-        bar = "▰" * filled_blocks + "▱" * (10 - filled_blocks)
+    # Process in batches of 5
+    for i in range(0, total_clients, 5):
+        batch = all_uids[i:i+5]
         
-        user_info = database.user_data.get(uid, {})
-        name = user_info.get('name', 'Unknown')
+        # 1. Update Progress Bar & Animation
+        progress = i + len(batch)
+        percentage = int((progress / total_clients) * 100)
+        # 10-segment bar for the ⬢/⬡ style
+        filled = percentage // 10
+        bar = "⬢" * filled + "⬡" * (10 - filled)
+        
+        # Get names of people in the current batch for the display
+        current_names = ", ".join([database.user_data.get(uid, {}).get('name', 'Unknown') for uid in batch])
 
         await status_msg.edit(
             f"Scanning 🔍\n"
             f"`{bar}` {percentage}%\n"
-            f"Checking **{name}**..."
+            f"Checking: **{current_names}**"
         )
 
-        # 2. Perform the actual balance check
-        res = await get_balance_for_user(uid, client)
-        results.append(res)
+        # 2. Run batch concurrently
+        batch_tasks = [get_balance_for_user(uid, database.clients[uid]) for uid in batch]
+        batch_results = await asyncio.gather(*batch_tasks)
+        results.extend(batch_results)
         
-        # Small sleep to prevent Telegram's "Message Not Modified" or Flood errors
-        await asyncio.sleep(0.5)
+        # Delay to stay under Telegram's edit limit (max 30 edits per min)
+        await asyncio.sleep(1.5)
 
-    # 3. Final Result Construction
+    # 3. Final Summary
     total_extols = 0
     msg = "💰 **WALLET AUDIT COMPLETE**\n━━━━━━━━━━━━━━━━\n"
     
     for name, balance, error in results:
         if error:
-            msg += f"» {name} - ⚠️ {error}\n"
+            msg += f"» {name} - ⚠️ Error\n" # Shorter error for clean look
         else:
             msg += f"» {name} - Є{balance}\n"
             total_extols += balance
             
     msg += f"━━━━━━━━━━━━━━━━\n➤ **Total - Є{total_extols}**"
-    
     await status_msg.edit(msg)
+
     
 
 
