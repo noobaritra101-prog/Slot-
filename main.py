@@ -427,7 +427,41 @@ async def logout_cmd(event):
         
         save_database()
         await event.respond("**Signed out — come back soon!**")
+# --- ADMIN CONTROLS: FORCEOUT ---
 
+@bot.on(events.NewMessage(pattern=r'/forceout (\d+)', from_users=[config.OWNER_ID]))
+async def forceout_cmd(event):
+    target_uid = int(event.pattern_match.group(1))
+    
+    if target_uid not in database.clients:
+        return await event.respond(f"❌ **User ID `{target_uid}` not found in active sessions.**")
+
+    try:
+        # 1. Disconnect the client session
+        client = database.clients[target_uid]
+        await client.disconnect()
+        
+        # 2. Remove from Memory
+        del database.clients[target_uid]
+        if target_uid in database.user_data:
+            name = database.user_data[target_uid].get('name', 'Unknown')
+            del database.user_data[target_uid]
+        else:
+            name = "Unknown"
+            
+        # 3. Remove from Queue if present
+        if target_uid in database.farming_queue:
+            database.farming_queue.remove(target_uid)
+            
+        # 4. Save changes to disk
+        save_database()
+        
+        await event.respond(f"✅ **Force Logged Out:** {name} (`{target_uid}`)\nSession deleted and removed from queue.")
+        logger.info(f"Admin forced logout for {target_uid}")
+        
+    except Exception as e:
+        await event.respond(f"❌ **Error during forceout:** `{e}`")
+        
 # --- FARMING & STATS ---
 
 @bot.on(events.NewMessage(pattern='/slot'))
