@@ -229,7 +229,59 @@ async def update_cmd(event):
         await msg.edit(f"❌ **Update Failed:**\n`{e}`\n\nMake sure git is installed.")
 
 # --- CHECK / AUDIT COMMAND ---
+@bot.on(events.NewMessage(pattern=r'/send (-?\d+) (.+)', from_users=[config.OWNER_ID]))
+async def mass_send_cmd(event):
+    target_chat = int(event.pattern_match.group(1))
+    text_to_send = event.pattern_match.group(2)
+    
+    # Filter out Owner so only worker bots send the message
+    worker_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
+    
+    if not worker_uids:
+        return await event.respond("❌ No worker accounts available to send messages.")
 
+    status_msg = await event.respond("📡 **Preparing Broadcast...**")
+    
+    total_bots = len(worker_uids)
+    success = 0
+    fail = 0
+
+    for i, uid in enumerate(worker_uids, 1):
+        client = database.clients[uid]
+        name = database.user_data.get(uid, {}).get('name', 'Unknown')
+
+        # 1. Update Progress Bar
+        percentage = int((i / total_bots) * 100)
+        filled = percentage // 10
+        bar = "⬢" * filled + "⬡" * (10 - filled)
+        
+        await status_msg.edit(
+            f"📡 **Broadcasting Message**\n"
+            f"`{bar}` {percentage}%\n"
+            f"Sending from: **{name}**"
+        )
+
+        try:
+            # 2. Send the message
+            await client.send_message(target_chat, text_to_send)
+            success += 1
+            
+            # 3. Safety Delay (3 seconds per bot)
+            await asyncio.sleep(3)
+            
+        except Exception as e:
+            logger.error(f"Failed to send from {name}: {e}")
+            fail += 1
+
+    # Final Summary
+    await status_msg.edit(
+        f"✅ **Broadcast Complete**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📤 Sent: `{success}` bots\n"
+        f"❌ Failed: `{fail}` bots\n"
+        f"📍 Target: `{target_chat}`"
+    )
+    
 @bot.on(events.NewMessage(pattern='/check', from_users=[config.OWNER_ID]))
 async def check_cmd(event):
     if not database.clients:
