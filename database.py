@@ -18,12 +18,16 @@ is_running = False
 # Tracks who is currently playing (for stats display)
 current_active_user = None
 
-# --- WATCHDOG VARIABLES (New) ---
+# --- WATCHDOG VARIABLES ---
 # Tracks the exact time (timestamp) the current user started their turn
 active_user_start_time = 0  
 
 # Flag to tell the main worker loop to abort the current user immediately
 force_abort_flag = False    
+
+# --- MASTER CONTROL VARIABLES ---
+# Master switch to pause the worker (used by /sleep command)
+global_sleep = False 
 
 def get_all_sessions():
     """Extracts session strings for export."""
@@ -35,4 +39,3 @@ def get_all_sessions():
         except Exception:
             pass
     return export_data
-    
