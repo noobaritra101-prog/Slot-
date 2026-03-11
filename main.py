@@ -372,12 +372,16 @@ async def sleep_on_cb(event):
         return await event.answer("❌ Admin only.", alert=True)
         
     database.global_sleep = True
+    
+    # FETCH MESSAGE TO GET BUTTONS
+    msg = await event.get_message()
+    
     await event.edit(
         f"⚙️ **Master Sleep Control**\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"Current Status: 💤 **ACTIVE** (Bot is Paused)\n\n"
         f"ℹ️ *When ON, the bot will stop playing slots. It will resume automatically when turned OFF.*",
-        buttons=event.message.buttons
+        buttons=msg.buttons
     )
     await event.answer("💤 Sleep Mode Enabled. Worker paused.")
 
@@ -391,12 +395,15 @@ async def sleep_off_cb(event):
     if not database.is_running and database.farming_queue:
         asyncio.create_task(worker.start_relay_race())
 
+    # FETCH MESSAGE TO GET BUTTONS
+    msg = await event.get_message()
+
     await event.edit(
         f"⚙️ **Master Sleep Control**\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"Current Status: 🚀 **INACTIVE** (Bot is Running)\n\n"
         f"ℹ️ *When ON, the bot will stop playing slots. It will resume automatically when turned OFF.*",
-        buttons=event.message.buttons
+        buttons=msg.buttons
     )
     await event.answer("🚀 Sleep Mode Disabled. Worker resuming.")
 
