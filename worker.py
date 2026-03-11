@@ -154,6 +154,11 @@ async def start_relay_race():
 
     try:
         while True:
+            # --- GLOBAL SLEEP CHECK ---
+            if getattr(database, 'global_sleep', False):
+                await asyncio.sleep(5)
+                continue 
+
             if not database.farming_queue:
                 logger.info("Queue is empty. Worker stopping.")
                 break
