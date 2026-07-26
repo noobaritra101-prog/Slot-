@@ -43,11 +43,11 @@ except ImportError:
 # --- CONFIGURATION & STATE ---
 API_ID = "26759620"        
 API_HASH = "e5c2cfff7011b7fee949ed8293bafde8"    
-BOT_TOKEN = "8711300190:AAFJDUtVRfFK6kLeJ6pLA820Oz_1Oa4XuQw" 
+BOT_TOKEN = "8807408443:AAEUvC6RXX_CPJKsKsqN3jdXEu8hgXCzR28" 
 ADMIN_IDS = [5716292610]        
 
 # 🚨 CLOUD BACKUP CHANNEL 🚨
-BACKUP_CHANNEL_ID = "@main_group_for_backup"
+BACKUP_CHANNEL_ID = "@nex_host_backup"
 
 # Initialize Client
 app = Client(
