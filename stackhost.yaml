@@ -9,7 +9,7 @@ commands:
   package: ""
   build:
     - "pip install -r requirements.txt"
-  start: "python main.py"
+  start: "python nexhost.py"
 
 repository:
   branch: "main"
