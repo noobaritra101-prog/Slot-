@@ -71,9 +71,30 @@ USER_CWD = {}
 BASE_DIR = "./projects"
 MAINTENANCE_MODE = False
 
-# --- RESOURCE LIMITS (tune these for your VPS) ---
-MAX_RAM_GB = 9          # RAM ceiling per running user script (was 1.2GB)
-MAX_FILE_SIZE_MB = 500  # Max single file upload size
+# --- RESOURCE LIMITS (AUTO-DETECTED — maxed out to what this VPS can actually handle) ---
+def _detect_safe_limits():
+    """
+    Reads the box's real RAM/disk instead of a guessed constant, so scripts
+    get as much headroom as possible WITHOUT being able to OOM-kill the bot
+    itself (that's what was causing "deploy and it stops responding").
+    Reserves ~1.5GB RAM and ~2GB disk for the OS + this bot process.
+    """
+    try:
+        total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+        ram_limit = max(1, round(total_ram_gb - 1.5, 1))
+    except Exception:
+        ram_limit = 9  # fallback if detection fails
+
+    try:
+        free_disk_gb = shutil.disk_usage(".").free / (1024 ** 3)
+        file_limit_mb = int(max(500, min(free_disk_gb - 2, 20)) * 1024)  # cap at 20GB/file, keep 2GB free
+    except Exception:
+        file_limit_mb = 500
+
+    cpu_cores = os.cpu_count() or 1
+    return ram_limit, file_limit_mb, cpu_cores
+
+MAX_RAM_GB, MAX_FILE_SIZE_MB, CPU_CORES = _detect_safe_limits()
 
 psutil.cpu_percent(interval=None)
 
@@ -114,8 +135,8 @@ def to_bold_sans(text):
 
 def heading(text):
     """ Standard heading style used across the whole bot: bold-sans font
-        wrapped in HTML bold+italic. """
-    return f"<b><i>{to_bold_sans(text)}</i></b>"
+        wrapped in HTML bold. """
+    return f"<b>{to_bold_sans(text)}</b>"
 
 
 # ==========================================
@@ -191,7 +212,7 @@ async def handle_text_states(client: Client, message: Message):
             with open(state["path"], "w", encoding="utf-8") as f: f.write(message.text)
             log_collab_event(state["owner_id"], state["proj_name"], user_id, f"Edited code in: {state['rel_path']}")
             await message.reply_text(f"✅ <b>File <code>{state['rel_path']}</code> saved!</b>")
-        except Exception as e: await message.reply_text(f"❌ <b><i>Error:</i></b>\n<code>{safe_html_log(e)}</code>")
+        except Exception as e: await message.reply_text(f"❌ <b>Error:</b>\n<code>{safe_html_log(e)}</code>")
         del EDIT_STATES[user_id]
         raise StopPropagation
 
@@ -219,7 +240,7 @@ async def handle_text_states(client: Client, message: Message):
             os.rename(old_path, new_path)
             log_collab_event(state["owner_id"], state["proj_name"], user_id, f"Renamed {state['rel_path']} to {new_name}")
             await message.reply_text(f"✅ <b>Renamed to <code>{new_name}</code> sucssessfully!</b>")
-        except Exception as e: await message.reply_text(f"❌ <b><i>Error:</i></b>\n<code>{safe_html_log(e)}</code>")
+        except Exception as e: await message.reply_text(f"❌ <b>Error:</b>\n<code>{safe_html_log(e)}</code>")
         raise StopPropagation
 
 @app.on_callback_query(group=-1)
@@ -258,9 +279,9 @@ def safe_handler(func):
             logger.error(f"Handler '{func.__name__}' crashed:\n{tb}")
 
             err_text = (
-                f"❌ <b><i>Something went wrong in</i></b> <code>{func.__name__}</code>:\n"
+                f"❌ <b>Something went wrong in</b> <code>{func.__name__}</code>:\n"
                 f"<code>{safe_html_log(f'{type(e).__name__}: {e}')}</code>\n\n"
-                f"<i>This has been logged. If it keeps happening, check bot_errors.log.</i>"
+                f"This has been logged. If it keeps happening, check bot_errors.log."
             )
             try:
                 if isinstance(update, CallbackQuery):
@@ -309,9 +330,9 @@ def get_maintenance_text():
     return (
         f"🔧 {heading('Nex Host — Maintenance System')}\n"
         "<blockquote>"
-        f"📡 <b><i>Status:</i></b> {status_icon}\n"
-        "🔒 <b><i>Access:</i></b> Admin Only\n"
-        "⚙️ <b><i>Scripts:</i></b> Running"
+        f"📡 <b>Status:</b> {status_icon}\n"
+        "🔒 <b>Access:</b> Admin Only\n"
+        "⚙️ <b>Scripts:</b> Running"
         "</blockquote>"
     )
 
@@ -370,13 +391,13 @@ def build_help_text(user_id):
     """ Top-level help menu — just an index, category buttons do the rest. """
     return (
         f"🆘 {heading('Help & Command Guide')}\n\n"
-        "<i>Pick a category below to see its commands.</i>"
+        "Pick a category below to see its commands."
     )
 
 def build_help_category_text(cat_key, user_id):
     emoji, label, commands = HELP_CATEGORIES[cat_key]
     text = f"{emoji} {heading(label)}\n<blockquote>"
-    text += "\n".join(f"<b><i>{cmd}</i></b> — {desc}" for cmd, desc in commands)
+    text += "\n".join(f"<b>{cmd}</b> — {desc}" for cmd, desc in commands)
     text += "</blockquote>"
     return text
 
@@ -400,10 +421,10 @@ async def build_status_text(user_id):
     running = [rs for rs in get_running_scripts(owner_id) if rs.startswith(f"{proj_name}/")]
 
     text = f"📊 {heading('Your Status')}\n<blockquote>"
-    text += f"🗂 <b><i>Active Project:</i></b> {proj_name}"
+    text += f"🗂 <b>Active Project:</b> {proj_name}"
     text += " (🤝 shared)\n" if is_collab else "\n"
-    text += f"🟢 <b><i>Running Scripts:</i></b> {len(running)}\n"
-    text += f"⏱ <b><i>Bot Uptime:</i></b> {format_uptime(time.time() - BOT_START_TIME)}"
+    text += f"🟢 <b>Running Scripts:</b> {len(running)}\n"
+    text += f"⏱ <b>Bot Uptime:</b> {format_uptime(time.time() - BOT_START_TIME)}"
     text += "</blockquote>"
     return text
 
@@ -415,7 +436,7 @@ async def generate_dashboard_text(client: Client, view="system"):
         text = f"📂 {heading('Network File Architecture')}\n"
         users = db.get_all_users()
         if not users: 
-            content = text + "<i>(No active projects)</i>\n\n"
+            content = text + "(No active projects)\n\n"
         else:
             body = ""
             for u_id in users:
@@ -461,14 +482,14 @@ async def generate_dashboard_text(client: Client, view="system"):
         content += (
             f"📊 {heading('System Vitals')}\n"
             "<blockquote>"
-            f"⚡ <b><i>CPU</i></b>  {get_progress_bar(cpu_percent)} {cpu_percent}%\n"
-            f"📟 <b><i>RAM</i></b>  {get_progress_bar(ram.percent)} {ram.percent}%\n"
-            f"💾 <b><i>Disk</i></b> {get_progress_bar(disk.percent)} {disk.percent}%"
+            f"⚡ <b>CPU</b>  {get_progress_bar(cpu_percent)} {cpu_percent}%\n"
+            f"📟 <b>RAM</b>  {get_progress_bar(ram.percent)} {ram.percent}%\n"
+            f"💾 <b>Disk</b> {get_progress_bar(disk.percent)} {disk.percent}%"
             "</blockquote>\n"
             f"⚙️ {heading('Runtime & Network')}\n"
             "<blockquote>"
-            f"⏱️ <b><i>Uptime:</i></b> {format_uptime(time.time() - BOT_START_TIME)}\n"
-            f"📦 <b><i>Active Deployments:</i></b> {active_deployments:02d}\n"
+            f"⏱️ <b>Uptime:</b> {format_uptime(time.time() - BOT_START_TIME)}\n"
+            f"📦 <b>Active Deployments:</b> {active_deployments:02d}\n"
             f"☁️ <b>Auto-Backup:</b> Every {BACKUP_INTERVAL_MINS} min"
             "</blockquote>"
         )
@@ -523,9 +544,9 @@ async def restore_system(client):
                 
                 if msg: await msg.edit_text("✅ <b>Restore ComPLete!</b>")
                 return
-        if msg: await msg.edit_text("ℹ️ <i>No backup found. Starting fresh.</i>")
+        if msg: await msg.edit_text("ℹ️ No backup found. Starting fresh.")
     except Exception as e:
-        if msg: await msg.edit_text(f"⚠️ <b><i>Restore Failed:</i></b>\n<code>{safe_html_log(e)}</code>")
+        if msg: await msg.edit_text(f"⚠️ <b>Restore Failed:</b>\n<code>{safe_html_log(e)}</code>")
 
 async def perform_backup(client, status_msg=None):
     global LAST_BACKUP_TIME
@@ -552,7 +573,7 @@ async def perform_backup(client, status_msg=None):
         await sent_msg.pin(disable_notification=True)
         if status_msg: await status_msg.edit_text("✅ <b>Backup saved to Cloud!</b>")
     except Exception as e:
-        if status_msg: await status_msg.edit_text(f"❌ <b><i>Backup Failed:</i></b>\n<code>{safe_html_log(e)}</code>")
+        if status_msg: await status_msg.edit_text(f"❌ <b>Backup Failed:</b>\n<code>{safe_html_log(e)}</code>")
 
 async def auto_backup_loop(client):
     global LAST_BACKUP_TIME
@@ -616,7 +637,10 @@ async def read_stdout(process, client, chat_id, project_dir, owner_id, rel_path,
                     
                     await asyncio.sleep(0.5)
                     await msg.delete()
-                    asyncio.create_task(start_process(client, chat_id, chat_id, rel_path, attempted_modules, action="autoheal"))
+                    asyncio.create_task(start_process(
+                        client, chat_id, owner_id, os.path.basename(project_dir), rel_path,
+                        attempted_modules, action="autoheal", initiator_id=owner_id
+                    ))
                     return 
         except asyncio.TimeoutError:
             if process.returncode is not None: break 
@@ -627,13 +651,10 @@ async def read_stdout(process, client, chat_id, project_dir, owner_id, rel_path,
         ACTIVE_PROCESSES.pop(process_key, None)
         save_running_state() 
 
-async def start_process(client, chat_id, initiator_id, rel_path, attempted_modules=None, action="deploy"):
+async def start_process(client, chat_id, owner_id, proj_name, rel_path, attempted_modules=None, action="deploy", initiator_id=None):
     if attempted_modules is None: attempted_modules = set()
-    
-    active_proj_str = db.get_active_project(initiator_id)
-    if not active_proj_str: return await client.send_message(chat_id, "❌ <b>No active project.</b>")
-    
-    owner_id, proj_name = resolve_project_owner(initiator_id, active_proj_str)
+    if initiator_id is None: initiator_id = owner_id
+
     process_key = f"{owner_id}:{proj_name}:{rel_path}"
     abs_project_dir = os.path.abspath(get_project_dir(owner_id, proj_name))
     
@@ -697,7 +718,7 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
                     anim += "└─ no external dependencies detected ✓\n\n"
                 await msg.edit_text(anim)
             except Exception as e:
-                anim += f"└─ ⚠️ Auto-generation failed.\n└─ 💡 <b><i>Suggest:</i></b> Please create requirements.txt manually and upload.\n\n"
+                anim += f"└─ ⚠️ Auto-generation failed.\n└─ 💡 <b>Suggest:</b> Please create requirements.txt manually and upload.\n\n"
                 await msg.edit_text(anim)
                 await asyncio.sleep(0.5)
 
@@ -760,16 +781,24 @@ async def restart_process(client, chat_id, initiator_id, active_proj_str, rel_pa
     process_key = f"{owner_id}:{proj_name}:{rel_path}"
     
     if process_key in ACTIVE_PROCESSES and ACTIVE_PROCESSES[process_key].returncode is None:
-        ACTIVE_PROCESSES[process_key].terminate()
+        old_process = ACTIVE_PROCESSES[process_key]
+        old_process.terminate()
+        try:
+            # Wait for the OLD process to actually exit before booting a new one —
+            # without this, the old process could still be alive (holding a port,
+            # a lock file, etc.) when the "new" one starts, which is exactly why
+            # restarts looked like they weren't reloading.
+            await asyncio.wait_for(old_process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            old_process.kill()
+            try: await old_process.wait()
+            except Exception: pass
         ACTIVE_PROCESSES.pop(process_key, None)
         RUNNING_SCRIPTS.pop(process_key, None)
+        save_running_state()
     
     log_collab_event(owner_id, proj_name, initiator_id, f"Restarted code execution: {rel_path}")
-    
-    prev_active = db.get_active_project(initiator_id)
-    db.set_active_project(initiator_id, active_proj_str)
-    await start_process(client, chat_id, initiator_id, rel_path, action="restart")
-    db.set_active_project(initiator_id, prev_active)
+    await start_process(client, chat_id, owner_id, proj_name, rel_path, action="restart", initiator_id=initiator_id)
 
 # ==========================================
 # 6. AUTO START PROCESSES ON BOOT
@@ -782,14 +811,11 @@ async def resume_active_processes(client):
         try:
             owner_id_str, proj_name, rel_path = process_key.split(":", 2)
             owner_id = int(owner_id_str)
-            prev_active = db.get_active_project(owner_id)
-            db.set_active_project(owner_id, proj_name) 
             
-            try: await client.send_message(owner_id, f"🔄 <b><i>System Rebooted:</i></b> Auto-resuming <code>{proj_name}/{rel_path}</code>...")
+            try: await client.send_message(owner_id, f"🔄 <b>System Rebooted:</b> Auto-resuming <code>{proj_name}/{rel_path}</code>...")
             except Exception: pass
             
-            await start_process(client, owner_id, owner_id, rel_path)
-            db.set_active_project(owner_id, prev_active)
+            await start_process(client, owner_id, owner_id, proj_name, rel_path)
             await asyncio.sleep(0.5) 
         except Exception as e:
             print(f"⚠️ Failed to resume {script_path}: {e}")
@@ -811,10 +837,10 @@ async def send_main_menu(msg_or_cb):
     else: active_display = active if active else "None"
         
     running = get_running_scripts(user_id)
-    status = f"🗂 <b><i>Active:</i></b> {active_display}"
-    if running: status += "\n🟢 <b><i>Running:</i></b> " + ", ".join(running)
+    status = f"🗂 <b>Active:</b> {active_display}"
+    if running: status += "\n🟢 <b>Running:</b> " + ", ".join(running)
 
-    text = f"🪼 {heading('Nex Host Cloud OS')}\n<blockquote>{status}</blockquote>\n<i>Select an option below:</i>"
+    text = f"🪼 {heading('Nex Host Cloud OS')}\n<blockquote>{status}</blockquote>\nSelect an option below:"
     if isinstance(msg_or_cb, Message): await msg_or_cb.reply_text(text, reply_markup=keyboard)
     else: await msg_or_cb.message.edit_text(text, reply_markup=keyboard)
 
@@ -911,10 +937,10 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         collabs = get_collabs()
         collab_users = collabs.get(f"{owner_id}:{proj_name}", [])
         
-        text = f"👥 <b><i>Collab Info:</i></b> <code>{proj_name}</code>\n👑 <b><i>Owner:</i></b> <code>{owner_id}</code>\n\n<b><i>Collaborators:</i></b>\n"
+        text = f"👥 <b>Collab Info:</b> <code>{proj_name}</code>\n👑 <b>Owner:</b> <code>{owner_id}</code>\n\n<b>Collaborators:</b>\n"
         if collab_users:
             for cu in collab_users: text += f" ├─ <code>{cu}</code>\n"
-        else: text += "<i>(None)</i>"
+        else: text += "(None)"
         
         await callback.answer("Viewing Collab Info")
         await callback.message.reply_text(text)
@@ -977,7 +1003,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
     elif data.startswith("fm_mkdir_"):
         rel_path = data.split("fm_mkdir_")[1]
         await callback.answer("Awaiting folder name...")
-        await callback.message.edit_text(f"📁 <b><i>Create Directory:</i></b>\n\nSend: <code>/mkdir {rel_path if rel_path != '.' else ''}/FolderName</code>")
+        await callback.message.edit_text(f"📁 <b>Create Directory:</b>\n\nSend: <code>/mkdir {rel_path if rel_path != '.' else ''}/FolderName</code>")
 
     elif data.startswith("fl_"):
         rel_path = data[3:]
@@ -1006,7 +1032,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
                 [create_btn("📥 Download", cb=f"dlfl_{rel_path}"[:64]), create_btn("🔙 Back", cb=f"fm_{os.path.dirname(rel_path) or '.'}"[:64])]
             ])
         await callback.answer("File selected!")
-        await callback.message.edit_text(f"📄 <b><i>File:</i></b> <code>{rel_path}</code>\n\n<i>Choose an action below:</i>", reply_markup=InlineKeyboardMarkup(keyboard))
+        await callback.message.edit_text(f"📄 <b>File:</b> <code>{rel_path}</code>\n\nChoose an action below:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("req_inst_"):
         rel_path = data.split("req_inst_")[1]
@@ -1063,9 +1089,9 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         EDIT_STATES[user_id] = {"path": filepath, "rel_path": rel_path, "owner_id": owner_id, "proj_name": proj_name}
         await callback.answer("Ready for edit.")
         await callback.message.reply_text(
-            f"✏️ <b><i>Editing:</i></b> <code>{rel_path}</code>\n\n"
+            f"✏️ <b>Editing:</b> <code>{rel_path}</code>\n\n"
             "Send the <b>new code/content</b> for this file here in the chat.\n"
-            "<i>(Note: This will overwrite the entire file)</i>\n\n"
+            "(Note: This will overwrite the entire file)\n\n"
             "Send <code>/cancel</code> to abort editing."
         )
 
@@ -1080,15 +1106,18 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         RENAME_STATES[user_id] = {"path": filepath, "rel_path": rel_path, "owner_id": owner_id, "proj_name": proj_name}
         await callback.answer("Ready for rename.")
         await callback.message.reply_text(
-            f"🏷 <b><i>Renaming:</i></b> <code>{rel_path}</code>\n\n"
-            "Send the <b><i>new name</i></b> for this file here in the chat.\n"
+            f"🏷 <b>Renaming:</b> <code>{rel_path}</code>\n\n"
+            "Send the <b>new name</b> for this file here in the chat.\n"
             "Send <code>/cancel</code> to abort."
         )
 
     elif data.startswith("run_file_"):
+        active_proj_str = db.get_active_project(user_id)
+        if not active_proj_str: return await callback.answer("❌ No active project.", show_alert=True)
+        owner_id, proj_name = resolve_project_owner(user_id, active_proj_str)
         await callback.answer("Starting Process...", show_alert=False)
         await callback.message.delete()
-        await start_process(client, callback.message.chat.id, user_id, data.split("run_file_")[1], action="deploy")
+        await start_process(client, callback.message.chat.id, owner_id, proj_name, data.split("run_file_")[1], action="deploy", initiator_id=user_id)
         
     elif data.startswith("rst_"):
         parts = data.split("rst_")[1].split(":")
@@ -1111,7 +1140,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         keyboard.append([create_btn("🔙 Back to Menu", cb="menu_main")])
         
         await callback.answer("Select process to stop...")
-        await callback.message.edit_text("🛑 <b><i>Select a process to stop:</i></b>", reply_markup=InlineKeyboardMarkup(keyboard))
+        await callback.message.edit_text("🛑 <b>Select a process to stop:</b>", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("kill_"):
         parts = data.split("_", 1)[1].split(":")
@@ -1195,7 +1224,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         active_proj_str = db.get_active_project(user_id)
         if not active_proj_str: return await callback.answer("❌ No active project!", show_alert=True)
         await callback.answer("Loading log options...")
-        await callback.message.edit_text("📜 <b><i>Select Log Type:</i></b>", reply_markup=InlineKeyboardMarkup([
+        await callback.message.edit_text("📜 <b>Select Log Type:</b>", reply_markup=InlineKeyboardMarkup([
             [create_btn("📜 System Log (run.log)", cb="refresh_log_run.log")],
             [create_btn("🤝 Collab Audit Logs", cb="refresh_log_collab_audit.log")],
             [create_btn("🔙 Menu", cb="menu_main")]
@@ -1212,7 +1241,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         tail = "".join(lines[-25:]) or "(Empty)"
         
         try:
-            header_text = f"📜 <b><i>Logs for</i></b> <code>{log_filename}</code>:\n"
+            header_text = f"📜 <b>Logs for</b> <code>{log_filename}</code>:\n"
             log_body = safe_html_log(tail[-3800:])
             final_text = f"{header_text}<pre><code class='language-bash'>{log_body}</code></pre>"
             
@@ -1246,7 +1275,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
     elif data.startswith("set_proj_"):
         db.set_active_project(user_id, data.split("set_proj_")[1])
         await callback.answer(f"Workspace set to {data.split('set_proj_')[1]}")
-        await callback.message.edit_text(f"✅ <b><i>Workspace Set:</i></b> <code>{data.split('set_proj_')[1]}</code>")
+        await callback.message.edit_text(f"✅ <b>Workspace Set:</b> <code>{data.split('set_proj_')[1]}</code>")
 
 # ==========================================
 # 8. ALL BOT COMMANDS
@@ -1300,7 +1329,7 @@ async def admin_broadcast(client: Client, message: Message):
 async def admin_active_cmd(client: Client, message: Message):
     running = [k for k, p in ACTIVE_PROCESSES.items() if p.returncode is None]
     if not running: return await message.reply_text("⚠️ <b>No processes are running globally.</b>")
-    text = "🌐 <b><i>Global Running Processes:</i></b>\n\n"
+    text = "🌐 <b>Global Running Processes:</b>\n\n"
     for i, k in enumerate(running):
         uid, proj, path = k.split(":", 2)
         text += f"{i+1}. 👤 <code>{uid}</code> | 📁 <code>{proj}</code> | 📄 <code>{path}</code>\n   🛑 <code>/admin_stop {uid} {proj} {path}</code>\n\n"
@@ -1352,11 +1381,11 @@ async def view_collabs(client: Client, message: Message):
     
     collabs = get_collabs()
     collab_users = collabs.get(f"{owner_id}:{proj_name}", [])
-    text = f"👥 {heading('Collaboration Info:')} {proj_name}\n<blockquote>👑 <b><i>Owner:</i></b> <code>{owner_id}</code>\n"
+    text = f"👥 {heading('Collaboration Info:')} {proj_name}\n<blockquote>👑 <b>Owner:</b> <code>{owner_id}</code>\n"
     if collab_users:
-        text += "🤝 <b><i>Collaborators:</i></b>\n"
+        text += "🤝 <b>Collaborators:</b>\n"
         for cu in collab_users: text += f" ├─ <code>{cu}</code>\n"
-    else: text += "<i>(No collaborators added)</i>\n"
+    else: text += "(No collaborators added)\n"
     text += "</blockquote>"
     await message.reply_text(text)
 
@@ -1387,7 +1416,7 @@ async def add_collab(client: Client, message: Message):
     try:
         await client.send_message(collab_id, f"🤝 <b>Collaboration Invite!</b>\n\nUser <code>{user_id}</code> has invited you to join their workspace: <code>{proj_name}</code>.", reply_markup=kb)
         await message.reply_text(f"⏳ <b>Invitation sent to <code>{collab_id}</code> pending acceptance.</b>")
-    except Exception as e: await message.reply_text(f"❌ <b><i>Could not send invite:</i></b>\n<code>{safe_html_log(e)}</code>")
+    except Exception as e: await message.reply_text(f"❌ <b>Could not send invite:</b>\n<code>{safe_html_log(e)}</code>")
 
 @app.on_message(filters.command("remcollab"))
 @safe_handler
@@ -1521,7 +1550,12 @@ async def clone_repo(client: Client, message: Message):
 @app.on_message(filters.command("run"))
 @safe_handler
 async def run_project(client: Client, message: Message):
-    await start_process(client, message.chat.id, message.from_user.id, message.command[1] if len(message.command) > 1 else "main.py", action="deploy")
+    user_id = message.from_user.id
+    active_proj_str = db.get_active_project(user_id)
+    if not active_proj_str: return await message.reply_text("❌ <b>No active project.</b>")
+    owner_id, proj_name = resolve_project_owner(user_id, active_proj_str)
+    rel_path = message.command[1] if len(message.command) > 1 else "main.py"
+    await start_process(client, message.chat.id, owner_id, proj_name, rel_path, action="deploy", initiator_id=user_id)
 
 @app.on_message(filters.command("restart"))
 @safe_handler
@@ -1569,7 +1603,7 @@ async def stop_process_cmd(client: Client, message: Message):
         path = k.split(":", 2)[2]
         keyboard.append([create_btn(f"🛑 Stop {path}", cb=f"kill_{owner_id}@{proj_name}:{path}"[:64])])
     keyboard.append([create_btn("🔙 Cancel", cb="menu_main")])
-    await message.reply_text("🛑 <b><i>Select process to sto stop:</i></b>", reply_markup=InlineKeyboardMarkup(keyboard))
+    await message.reply_text("🛑 <b>Select process to sto stop:</b>", reply_markup=InlineKeyboardMarkup(keyboard))
 
 @app.on_message(filters.command("input"))
 @safe_handler
@@ -1616,7 +1650,7 @@ async def check_logs(client: Client, message: Message):
     tail = "".join(lines[-25:]) or "(Empty)"
     
     kb = InlineKeyboardMarkup([[create_btn("🔄 Refresh Logs", cb=f"refresh_log_{log_filename}")]])
-    header_text = f"📜 <b><i>Logs for</i></b> <code>{log_filename}</code>:\n"
+    header_text = f"📜 <b>Logs for</b> <code>{log_filename}</code>:\n"
     log_body = safe_html_log(tail[-3800:])
     final_text = f"{header_text}<pre><code class='language-bash'>{log_body}</code></pre>"
     await message.reply_text(final_text, reply_markup=kb)
@@ -1639,13 +1673,13 @@ async def export_project(client: Client, message: Message):
                 for file in files: zipf.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), project_dir))
     await asyncio.to_thread(_export_zip)
     await msg.edit_text("📤 <b>Uploading...</b>")
-    await message.reply_document(document=zip_path, caption=f"📦 <b><i>Workspace Backup:</i></b> <code>{proj_name}</code>")
+    await message.reply_document(document=zip_path, caption=f"📦 <b>Workspace Backup:</b> <code>{proj_name}</code>")
     os.remove(zip_path)
 
 @app.on_message(filters.command("import"))
 @safe_handler
 async def import_project(client: Client, message: Message):
-    await message.reply_text("📥 <b><i>How to Import:</i></b>\n1️⃣ Use <code>/newproject [name]</code>\n2️⃣ Send me the <code>.zip</code> file directly in chat.")
+    await message.reply_text("📥 <b>How to Import:</b>\n1️⃣ Use <code>/newproject [name]</code>\n2️⃣ Send me the <code>.zip</code> file directly in chat.")
 
 @app.on_message(filters.command("rename"))
 @safe_handler
@@ -1768,7 +1802,7 @@ async def whoami_cmd(client: Client, message: Message):
 @safe_handler
 async def handle_file_upload(client: Client, message: Message):
     MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024
-    if message.document.file_size > MAX_FILE_SIZE: return await message.reply_text(f"❌ <b><i>Upload Denied:</i></b> File exceeds the {MAX_FILE_SIZE_MB} MB limit.")
+    if message.document.file_size > MAX_FILE_SIZE: return await message.reply_text(f"❌ <b>Upload Denied:</b> File exceeds the {MAX_FILE_SIZE_MB} MB limit.")
 
     user_id = message.from_user.id
     active_proj_str = db.get_active_project(user_id)
@@ -1790,8 +1824,8 @@ async def handle_file_upload(client: Client, message: Message):
         
     log_collab_event(owner_id, proj_name, user_id, f"Uploaded file: {message.document.file_name} to {cwd}")
     
-    if cwd == ".": await msg.edit_text(f"✅ <b><i>Saved to workspace root:</i></b> <code>{proj_name}</code>")
-    else: await msg.edit_text(f"✅ <b><i>Saved to folder:</i></b> <code>{proj_name}/{cwd}</code>")
+    if cwd == ".": await msg.edit_text(f"✅ <b>Saved to workspace root:</b> <code>{proj_name}</code>")
+    else: await msg.edit_text(f"✅ <b>Saved to folder:</b> <code>{proj_name}/{cwd}</code>")
 
 # ==========================================
 # 10. STARTUP
