@@ -97,6 +97,26 @@ def create_btn(text, cb=None, url=None):
     elif cb: kwargs["callback_data"] = cb
     return InlineKeyboardButton(**kwargs)
 
+def to_bold_sans(text):
+    """ Converts plain ASCII text to Mathematical Sans-Serif Bold unicode
+        (the 𝗕𝗼𝗹𝗱 𝗛𝘄𝗮𝗱𝗶 look), used for section headings. """
+    out = []
+    for ch in text:
+        if 'A' <= ch <= 'Z':
+            out.append(chr(ord(ch) - ord('A') + 0x1D5D4))
+        elif 'a' <= ch <= 'z':
+            out.append(chr(ord(ch) - ord('a') + 0x1D5EE))
+        elif '0' <= ch <= '9':
+            out.append(chr(ord(ch) - ord('0') + 0x1D7EC))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+def heading(text):
+    """ Standard heading style used across the whole bot: bold-sans font
+        wrapped in HTML bold+italic. """
+    return f"<b><i>{to_bold_sans(text)}</i></b>"
+
 
 # ==========================================
 # 1. FAST COLLABORATION & STATE MANAGERS
@@ -171,7 +191,7 @@ async def handle_text_states(client: Client, message: Message):
             with open(state["path"], "w", encoding="utf-8") as f: f.write(message.text)
             log_collab_event(state["owner_id"], state["proj_name"], user_id, f"Edited code in: {state['rel_path']}")
             await message.reply_text(f"✅ <b>File <code>{state['rel_path']}</code> saved!</b>")
-        except Exception as e: await message.reply_text(f"❌ <b>Error:</b>\n<code>{safe_html_log(e)}</code>")
+        except Exception as e: await message.reply_text(f"❌ <b><i>Error:</i></b>\n<code>{safe_html_log(e)}</code>")
         del EDIT_STATES[user_id]
         raise StopPropagation
 
@@ -199,7 +219,7 @@ async def handle_text_states(client: Client, message: Message):
             os.rename(old_path, new_path)
             log_collab_event(state["owner_id"], state["proj_name"], user_id, f"Renamed {state['rel_path']} to {new_name}")
             await message.reply_text(f"✅ <b>Renamed to <code>{new_name}</code> sucssessfully!</b>")
-        except Exception as e: await message.reply_text(f"❌ <b>Error:</b>\n<code>{safe_html_log(e)}</code>")
+        except Exception as e: await message.reply_text(f"❌ <b><i>Error:</i></b>\n<code>{safe_html_log(e)}</code>")
         raise StopPropagation
 
 @app.on_callback_query(group=-1)
@@ -238,7 +258,7 @@ def safe_handler(func):
             logger.error(f"Handler '{func.__name__}' crashed:\n{tb}")
 
             err_text = (
-                f"❌ <b>Something went wrong in</b> <code>{func.__name__}</code>:\n"
+                f"❌ <b><i>Something went wrong in</i></b> <code>{func.__name__}</code>:\n"
                 f"<code>{safe_html_log(f'{type(e).__name__}: {e}')}</code>\n\n"
                 f"<i>This has been logged. If it keeps happening, check bot_errors.log.</i>"
             )
@@ -287,11 +307,11 @@ def get_file_icon(filename):
 def get_maintenance_text():
     status_icon = "Enabled" if MAINTENANCE_MODE else "Disabled"
     return (
-        "🔧 <b>Nex Host — Maintenance System</b>\n"
+        f"🔧 {heading('Nex Host — Maintenance System')}\n"
         "<blockquote>"
-        f"📡 <b>Status:</b> {status_icon}\n"
-        "🔒 <b>Access:</b> Admin Only\n"
-        "⚙️ <b>Scripts:</b> Running"
+        f"📡 <b><i>Status:</i></b> {status_icon}\n"
+        "🔒 <b><i>Access:</i></b> Admin Only\n"
+        "⚙️ <b><i>Scripts:</i></b> Running"
         "</blockquote>"
     )
 
@@ -301,84 +321,98 @@ def get_maintenance_keyboard():
         [create_btn("Close", cb="maint_close")]
     ])
 
+HELP_CATEGORIES = {
+    "projects": ("📁", "Projects", [
+        ("/newproject [name]", "create a workspace"),
+        ("/deleteproject [name]", "wipe a workspace"),
+        ("/myprojects", "list &amp; switch workspaces"),
+        ("/myfiles", "graphical file manager"),
+        ("/tree", "folder tree view"),
+        ("/status", "quick snapshot of your active project"),
+    ]),
+    "running": ("▶️", "Running Code", [
+        ("/run [file.py]", "execute a file"),
+        ("/restart [file.py]", "restart a script"),
+        ("/stop", "stop a running script"),
+        ("/input [text]", "send data to console"),
+        ("/logs", "view terminal output"),
+    ]),
+    "files": ("📄", "Files", [
+        ("/rename [old] [new]", "rename a file"),
+        ("/mkdir [name]", "make a folder"),
+        ("/rmdir [name]", "remove a folder"),
+        ("/deletefile [path]", "delete a file"),
+        ("/clone [url]", "clone a GitHub repo"),
+        ("/backup_proj", "download workspace as ZIP"),
+        ("/import", "upload a ZIP into a workspace"),
+        ("/installreqs", "install requirements.txt"),
+    ]),
+    "collab": ("🤝", "Collaboration", [
+        ("/addcollab [proj] [uid]", "invite a user"),
+        ("/collabs", "view collaborators on active project"),
+        ("/mycollabs", "workspaces shared with you"),
+        ("/leavecollab", "leave a shared workspace"),
+        ("/remcollab [proj] [uid]", "remove a collaborator"),
+    ]),
+    "admin": ("👑", "Admin", [
+        ("/maintenance", "toggle maintenance mode"),
+        ("/backup", "manual cloud backup"),
+        ("/setbackup [mins]", "auto-backup interval"),
+        ("/broadcast [msg]", "announcement to all users"),
+        ("/dashboard", "system vitals"),
+        ("/admin_active", "every running process, globally"),
+        ("/admin_stop [uid] [proj] [file]", "stop any user's script"),
+        ("/admin_deleteproj [uid] [proj]", "delete any user's project"),
+    ]),
+}
+
 def build_help_text(user_id):
-    txt = (
-        "🆘 <b>Help &amp; Command Guide</b>\n\n"
-        "<b>📁 Projects</b>\n"
-        "<blockquote>"
-        "<code>/newproject [name]</code> — create a workspace\n"
-        "<code>/deleteproject [name]</code> — wipe a workspace\n"
-        "<code>/myprojects</code> — list &amp; switch workspaces\n"
-        "<code>/myfiles</code> — graphical file manager\n"
-        "<code>/tree</code> — folder tree view\n"
-        "<code>/status</code> — quick snapshot of your active project"
-        "</blockquote>\n"
-        "<b>▶️ Running Code</b>\n"
-        "<blockquote>"
-        "<code>/run [file.py]</code> — execute a file\n"
-        "<code>/restart [file.py]</code> — restart a script\n"
-        "<code>/stop</code> — stop a running script\n"
-        "<code>/input [text]</code> — send data to console\n"
-        "<code>/logs</code> — view terminal output"
-        "</blockquote>\n"
-        "<b>📄 Files</b>\n"
-        "<blockquote>"
-        "<code>/rename [old] [new]</code> — rename a file\n"
-        "<code>/mkdir [name]</code> / <code>/rmdir [name]</code> — folders\n"
-        "<code>/deletefile [path]</code> — delete a file\n"
-        "<code>/clone [url]</code> — clone a GitHub repo\n"
-        "<code>/backup_proj</code> — download workspace as ZIP\n"
-        "<code>/import</code> — upload a ZIP into a workspace\n"
-        "<code>/installreqs</code> — install requirements.txt"
-        "</blockquote>\n"
-        "<b>🤝 Collaboration</b>\n"
-        "<blockquote>"
-        "<code>/addcollab [proj] [uid]</code> — invite a user\n"
-        "<code>/collabs</code> — view collaborators on active project\n"
-        "<code>/mycollabs</code> — workspaces shared with you\n"
-        "<code>/leavecollab</code> — leave a shared workspace\n"
-        "<code>/remcollab [proj] [uid]</code> — remove a collaborator"
-        "</blockquote>"
+    """ Top-level help menu — just an index, category buttons do the rest. """
+    return (
+        f"🆘 {heading('Help & Command Guide')}\n\n"
+        "<i>Pick a category below to see its commands.</i>"
     )
-    if user_id in ADMIN_IDS:
-        txt += (
-            "\n\n<b>👑 Admin</b>\n"
-            "<blockquote>"
-            "<code>/maintenance</code> — toggle maintenance mode\n"
-            "<code>/backup</code> — manual cloud backup\n"
-            "<code>/setbackup [mins]</code> — auto-backup interval\n"
-            "<code>/broadcast [msg]</code> — announcement to all users\n"
-            "<code>/dashboard</code> — system vitals\n"
-            "<code>/admin_active</code> — every running process, globally\n"
-            "<code>/admin_stop [uid] [proj] [file]</code>\n"
-            "<code>/admin_deleteproj [uid] [proj]</code>"
-            "</blockquote>"
-        )
-    return txt
+
+def build_help_category_text(cat_key, user_id):
+    emoji, label, commands = HELP_CATEGORIES[cat_key]
+    text = f"{emoji} {heading(label)}\n<blockquote>"
+    text += "\n".join(f"<b><i>{cmd}</i></b> — {desc}" for cmd, desc in commands)
+    text += "</blockquote>"
+    return text
+
+def build_help_keyboard(user_id):
+    rows, row = [], []
+    for key, (emoji, label, _) in HELP_CATEGORIES.items():
+        if key == "admin" and user_id not in ADMIN_IDS: continue
+        row.append(create_btn(f"{emoji} {label}", cb=f"help_cat_{key}"))
+        if len(row) == 2: rows.append(row); row = []
+    if row: rows.append(row)
+    rows.append([create_btn("🔙 Back to Menu", cb="menu_main")])
+    return InlineKeyboardMarkup(rows)
 
 async def build_status_text(user_id):
     active_proj_str = db.get_active_project(user_id)
     if not active_proj_str:
-        return "📊 <b>Your Status</b>\n<blockquote>No active project selected. Use /myprojects to pick one.</blockquote>"
+        return f"📊 {heading('Your Status')}\n<blockquote>No active project selected. Use /myprojects to pick one.</blockquote>"
 
     owner_id, proj_name = resolve_project_owner(user_id, active_proj_str)
     is_collab = "@" in active_proj_str
     running = [rs for rs in get_running_scripts(owner_id) if rs.startswith(f"{proj_name}/")]
 
-    text = "📊 <b>Your Status</b>\n<blockquote>"
-    text += f"🗂 <b>Active Project:</b> {proj_name}"
+    text = f"📊 {heading('Your Status')}\n<blockquote>"
+    text += f"🗂 <b><i>Active Project:</i></b> {proj_name}"
     text += " (🤝 shared)\n" if is_collab else "\n"
-    text += f"🟢 <b>Running Scripts:</b> {len(running)}\n"
-    text += f"⏱ <b>Bot Uptime:</b> {format_uptime(time.time() - BOT_START_TIME)}"
+    text += f"🟢 <b><i>Running Scripts:</i></b> {len(running)}\n"
+    text += f"⏱ <b><i>Bot Uptime:</i></b> {format_uptime(time.time() - BOT_START_TIME)}"
     text += "</blockquote>"
     return text
 
 async def generate_dashboard_text(client: Client, view="system"):
-    header = "🌐 <b>Nex Host Cloud OS • v4.0</b>\n\n"
+    header = f"🌐 {heading('Nex Host Cloud OS • v4.0')}\n\n"
     content = ""
     
     if view == "files":
-        text = "📂 <b>Network File Architecture</b>\n"
+        text = f"📂 {heading('Network File Architecture')}\n"
         users = db.get_all_users()
         if not users: 
             content = text + "<i>(No active projects)</i>\n\n"
@@ -425,16 +459,16 @@ async def generate_dashboard_text(client: Client, view="system"):
         disk = psutil.disk_usage('/')
         
         content += (
-            "📊 <b>System Vitals</b>\n"
+            f"📊 {heading('System Vitals')}\n"
             "<blockquote>"
-            f"⚡ <b>CPU</b>  {get_progress_bar(cpu_percent)} {cpu_percent}%\n"
-            f"📟 <b>RAM</b>  {get_progress_bar(ram.percent)} {ram.percent}%\n"
-            f"💾 <b>Disk</b> {get_progress_bar(disk.percent)} {disk.percent}%"
+            f"⚡ <b><i>CPU</i></b>  {get_progress_bar(cpu_percent)} {cpu_percent}%\n"
+            f"📟 <b><i>RAM</i></b>  {get_progress_bar(ram.percent)} {ram.percent}%\n"
+            f"💾 <b><i>Disk</i></b> {get_progress_bar(disk.percent)} {disk.percent}%"
             "</blockquote>\n"
-            "⚙️ <b>Runtime &amp; Network</b>\n"
+            f"⚙️ {heading('Runtime & Network')}\n"
             "<blockquote>"
-            f"⏱️ <b>Uptime:</b> {format_uptime(time.time() - BOT_START_TIME)}\n"
-            f"📦 <b>Active Deployments:</b> {active_deployments:02d}\n"
+            f"⏱️ <b><i>Uptime:</i></b> {format_uptime(time.time() - BOT_START_TIME)}\n"
+            f"📦 <b><i>Active Deployments:</i></b> {active_deployments:02d}\n"
             f"☁️ <b>Auto-Backup:</b> Every {BACKUP_INTERVAL_MINS} min"
             "</blockquote>"
         )
@@ -491,7 +525,7 @@ async def restore_system(client):
                 return
         if msg: await msg.edit_text("ℹ️ <i>No backup found. Starting fresh.</i>")
     except Exception as e:
-        if msg: await msg.edit_text(f"⚠️ <b>Restore Failed:</b>\n<code>{safe_html_log(e)}</code>")
+        if msg: await msg.edit_text(f"⚠️ <b><i>Restore Failed:</i></b>\n<code>{safe_html_log(e)}</code>")
 
 async def perform_backup(client, status_msg=None):
     global LAST_BACKUP_TIME
@@ -513,12 +547,12 @@ async def perform_backup(client, status_msg=None):
         chat = await client.get_chat(BACKUP_CHANNEL_ID)
         if chat.pinned_message: await client.delete_messages(BACKUP_CHANNEL_ID, chat.pinned_message.id)
         
-        sent_msg = await client.send_document(BACKUP_CHANNEL_ID, document=zip_path, caption=f"☁️ <b>Nex Host Backup</b>\n📅 {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        sent_msg = await client.send_document(BACKUP_CHANNEL_ID, document=zip_path, caption=f"☁️ {heading('Nex Host Backup')}\n📅 {time.strftime('%Y-%m-%d %H:%M:%S')}")
         os.remove(zip_path)
         await sent_msg.pin(disable_notification=True)
         if status_msg: await status_msg.edit_text("✅ <b>Backup saved to Cloud!</b>")
     except Exception as e:
-        if status_msg: await status_msg.edit_text(f"❌ <b>Backup Failed:</b>\n<code>{safe_html_log(e)}</code>")
+        if status_msg: await status_msg.edit_text(f"❌ <b><i>Backup Failed:</i></b>\n<code>{safe_html_log(e)}</code>")
 
 async def auto_backup_loop(client):
     global LAST_BACKUP_TIME
@@ -560,7 +594,7 @@ async def read_stdout(process, client, chat_id, project_dir, owner_id, rel_path,
                     pkg_map = {"dotenv": "python-dotenv", "bs4": "beautifulsoup4", "cv2": "opencv-python", "yaml": "pyyaml", "PIL": "Pillow", "telebot": "pyTelegramBotAPI"}
                     pkg = pkg_map.get(module, module)
                     
-                    anim = f"⚙️ <u><b>AUTO-HEAL INITIATED...</b></u>\n└─ missing module detected: <code>{pkg}</code>\n└─ installing dependencies..."
+                    anim = f"⚙️ <u>{heading('AUTO-HEAL INITIATED...')}</u>\n└─ missing module detected: <code>{pkg}</code>\n└─ installing dependencies..."
                     msg = await client.send_message(chat_id, anim)
                     
                     proc = await asyncio.create_subprocess_shell(f"{pip_bin} install {pkg}")
@@ -573,7 +607,7 @@ async def read_stdout(process, client, chat_id, project_dir, owner_id, rel_path,
                         with open(req_p, mode) as f: f.write(f"\n{pkg}")
                     except Exception: pass
                     
-                    anim = f"⚙️ <u><b>AUTO-HEAL INITIATED...</b></u>\n└─ missing module detected: <code>{pkg}</code>\n└─ resolving packages ✓\n\n🔁 <b>Restarting script...</b>"
+                    anim = f"⚙️ <u>{heading('AUTO-HEAL INITIATED...')}</u>\n└─ missing module detected: <code>{pkg}</code>\n└─ resolving packages ✓\n\n🔁 <b>Restarting script...</b>"
                     await msg.edit_text(anim)
                     
                     if process.returncode is None:
@@ -611,11 +645,11 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
 
     log_collab_event(owner_id, proj_name, initiator_id, f"Started code execution: {rel_path}")
 
-    if action == "deploy": header = "⚙️ <b>STARTING DEPLOYMENT...</b>"
-    elif action == "restart": header = "🔁 <b>RESTARTING DEPLOYMENT...</b>"
-    else: header = "🔧 <b>AUTO-HEAL RESTART...</b>"
+    if action == "deploy": header = f"⚙️ {heading('STARTING DEPLOYMENT...')}"
+    elif action == "restart": header = f"🔁 {heading('RESTARTING DEPLOYMENT...')}"
+    else: header = f"🔧 {heading('AUTO-HEAL RESTART...')}"
         
-    anim = f"{header}\n\n📦 <b>CREATING VIRTUAL ENVIRONMENT...</b>\n"
+    anim = f"{header}\n\n📦 {heading('CREATING VIRTUAL ENVIRONMENT...')}\n"
     msg = await client.send_message(chat_id, anim)
     
     venv_dir = os.path.join(abs_project_dir, "venv")
@@ -632,7 +666,7 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
         
         # --- AUTO-GENERATE requirements.txt if missing ---
         if not os.path.exists(req_path) and action != "autoheal":
-            anim += "📄 <b>AUTO-GENERATING REQUIREMENTS...</b>\n"
+            anim += f"📄 {heading('AUTO-GENERATING REQUIREMENTS...')}\n"
             await msg.edit_text(anim)
             try:
                 try: stdlib = set(sys.stdlib_module_names)
@@ -663,13 +697,13 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
                     anim += "└─ no external dependencies detected ✓\n\n"
                 await msg.edit_text(anim)
             except Exception as e:
-                anim += f"└─ ⚠️ Auto-generation failed.\n└─ 💡 <b>Suggest:</b> Please create requirements.txt manually and upload.\n\n"
+                anim += f"└─ ⚠️ Auto-generation failed.\n└─ 💡 <b><i>Suggest:</i></b> Please create requirements.txt manually and upload.\n\n"
                 await msg.edit_text(anim)
                 await asyncio.sleep(0.5)
 
         # Proceed to install requirements.txt if present
         if os.path.exists(req_path) and action != "autoheal":
-            anim += "📡 <b>FETCHING REQUIREMENTS...</b>\n└─ installing dependencies...\n"
+            anim += f"📡 {heading('FETCHING REQUIREMENTS...')}\n└─ installing dependencies...\n"
             await msg.edit_text(anim)
             
             req_proc = await asyncio.create_subprocess_shell(f"{pip_bin} install -r {req_path}")
@@ -678,7 +712,7 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
             anim += "└─ resolving packages ✓\n\n"
             await msg.edit_text(anim)
 
-        anim += "🛠️ <b>CREATING CONTAINER...</b>\n"
+        anim += f"🛠️ {heading('CREATING CONTAINER...')}\n"
         await msg.edit_text(anim)
 
         def enforce_ram_limit():
@@ -700,7 +734,7 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
         
         await asyncio.sleep(0.6) 
         if process.returncode is not None:
-            anim += f"❌ <u><b>DEPLOYMENT UNSUCCESSFUL</b></u>\n└─ Process crashed instantly (Code: {process.returncode}). View logs to debug."
+            anim += f"❌ <u>{heading('DEPLOYMENT UNSUCCESSFUL')}</u>\n└─ Process crashed instantly (Code: {process.returncode}). View logs to debug."
             return await msg.edit_text(anim)
 
         ACTIVE_PROCESSES[process_key] = process
@@ -714,11 +748,11 @@ async def start_process(client, chat_id, initiator_id, rel_path, attempted_modul
         ])
         
         recent_log = get_recent_logs(abs_project_dir)
-        anim += f"🚀 <u><b>DEPLOYMENT SUCCESSFUL ✓</b></u>\n\n<pre><code class='language-bash'>{safe_html_log(recent_log)}</code></pre>"
+        anim += f"🚀 <u>{heading('DEPLOYMENT SUCCESSFUL ✓')}</u>\n\n<pre><code class='language-bash'>{safe_html_log(recent_log)}</code></pre>"
         await msg.edit_text(anim, reply_markup=keyboard)
 
     except Exception as e:
-        anim += f"\n❌ <u><b>DEPLOYMENT UNSUCCESSFUL</b></u>\n└─ Error: <code>{safe_html_log(e)}</code>"
+        anim += f"\n❌ <u>{heading('DEPLOYMENT UNSUCCESSFUL')}</u>\n└─ Error: <code>{safe_html_log(e)}</code>"
         await msg.edit_text(anim)
 
 async def restart_process(client, chat_id, initiator_id, active_proj_str, rel_path):
@@ -751,7 +785,7 @@ async def resume_active_processes(client):
             prev_active = db.get_active_project(owner_id)
             db.set_active_project(owner_id, proj_name) 
             
-            try: await client.send_message(owner_id, f"🔄 <b>System Rebooted:</b> Auto-resuming <code>{proj_name}/{rel_path}</code>...")
+            try: await client.send_message(owner_id, f"🔄 <b><i>System Rebooted:</i></b> Auto-resuming <code>{proj_name}/{rel_path}</code>...")
             except Exception: pass
             
             await start_process(client, owner_id, owner_id, rel_path)
@@ -777,10 +811,10 @@ async def send_main_menu(msg_or_cb):
     else: active_display = active if active else "None"
         
     running = get_running_scripts(user_id)
-    status = f"🗂 <b>Active:</b> {active_display}"
-    if running: status += "\n🟢 <b>Running:</b> " + ", ".join(running)
+    status = f"🗂 <b><i>Active:</i></b> {active_display}"
+    if running: status += "\n🟢 <b><i>Running:</i></b> " + ", ".join(running)
 
-    text = f"🪼 <b>Nex Host Cloud OS</b>\n<blockquote>{status}</blockquote>\n<i>Select an option below:</i>"
+    text = f"🪼 {heading('Nex Host Cloud OS')}\n<blockquote>{status}</blockquote>\n<i>Select an option below:</i>"
     if isinstance(msg_or_cb, Message): await msg_or_cb.reply_text(text, reply_markup=keyboard)
     else: await msg_or_cb.message.edit_text(text, reply_markup=keyboard)
 
@@ -821,7 +855,7 @@ async def render_projects(client, message, user_id, is_cb=True):
         if row: keyboard.append(row)
 
     keyboard.append([create_btn("🔄 Refresh", cb="menu_projects"), create_btn("🔙 Back to Menu", cb="menu_main")])
-    text = f"🗂 <b>Workspace Selection</b>\n<blockquote>⭐ Active: <code>{active or 'None'}</code></blockquote>"
+    text = f"🗂 {heading('Workspace Selection')}\n<blockquote>⭐ Active: <code>{active or 'None'}</code></blockquote>"
     await (message.edit_text if is_cb else message.reply_text)(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 @app.on_callback_query()
@@ -877,7 +911,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         collabs = get_collabs()
         collab_users = collabs.get(f"{owner_id}:{proj_name}", [])
         
-        text = f"👥 <b>Collab Info:</b> <code>{proj_name}</code>\n👑 <b>Owner:</b> <code>{owner_id}</code>\n\n<b>Collaborators:</b>\n"
+        text = f"👥 <b><i>Collab Info:</i></b> <code>{proj_name}</code>\n👑 <b><i>Owner:</i></b> <code>{owner_id}</code>\n\n<b><i>Collaborators:</i></b>\n"
         if collab_users:
             for cu in collab_users: text += f" ├─ <code>{cu}</code>\n"
         else: text += "<i>(None)</i>"
@@ -938,12 +972,12 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         
         collab_tag = "🤝 Collab" if owner_id != user_id else "Personal"
         await callback.answer("Folder loaded!")
-        await callback.message.edit_text(f"📂 <b>Nex Host Explorer:</b> <code>{proj_name}/{rel_path}</code> ({collab_tag})", reply_markup=InlineKeyboardMarkup(keyboard))
+        await callback.message.edit_text(f"📂 {heading('Nex Host Explorer:')} <code>{proj_name}/{rel_path}</code> ({collab_tag})", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("fm_mkdir_"):
         rel_path = data.split("fm_mkdir_")[1]
         await callback.answer("Awaiting folder name...")
-        await callback.message.edit_text(f"📁 <b>Create Directory:</b>\n\nSend: <code>/mkdir {rel_path if rel_path != '.' else ''}/FolderName</code>")
+        await callback.message.edit_text(f"📁 <b><i>Create Directory:</i></b>\n\nSend: <code>/mkdir {rel_path if rel_path != '.' else ''}/FolderName</code>")
 
     elif data.startswith("fl_"):
         rel_path = data[3:]
@@ -972,7 +1006,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
                 [create_btn("📥 Download", cb=f"dlfl_{rel_path}"[:64]), create_btn("🔙 Back", cb=f"fm_{os.path.dirname(rel_path) or '.'}"[:64])]
             ])
         await callback.answer("File selected!")
-        await callback.message.edit_text(f"📄 <b>File:</b> <code>{rel_path}</code>\n\n<i>Choose an action below:</i>", reply_markup=InlineKeyboardMarkup(keyboard))
+        await callback.message.edit_text(f"📄 <b><i>File:</i></b> <code>{rel_path}</code>\n\n<i>Choose an action below:</i>", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("req_inst_"):
         rel_path = data.split("req_inst_")[1]
@@ -1029,7 +1063,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         EDIT_STATES[user_id] = {"path": filepath, "rel_path": rel_path, "owner_id": owner_id, "proj_name": proj_name}
         await callback.answer("Ready for edit.")
         await callback.message.reply_text(
-            f"✏️ <b>Editing:</b> <code>{rel_path}</code>\n\n"
+            f"✏️ <b><i>Editing:</i></b> <code>{rel_path}</code>\n\n"
             "Send the <b>new code/content</b> for this file here in the chat.\n"
             "<i>(Note: This will overwrite the entire file)</i>\n\n"
             "Send <code>/cancel</code> to abort editing."
@@ -1046,8 +1080,8 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         RENAME_STATES[user_id] = {"path": filepath, "rel_path": rel_path, "owner_id": owner_id, "proj_name": proj_name}
         await callback.answer("Ready for rename.")
         await callback.message.reply_text(
-            f"🏷 <b>Renaming:</b> <code>{rel_path}</code>\n\n"
-            "Send the <b>new name</b> for this file here in the chat.\n"
+            f"🏷 <b><i>Renaming:</i></b> <code>{rel_path}</code>\n\n"
+            "Send the <b><i>new name</i></b> for this file here in the chat.\n"
             "Send <code>/cancel</code> to abort."
         )
 
@@ -1077,7 +1111,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         keyboard.append([create_btn("🔙 Back to Menu", cb="menu_main")])
         
         await callback.answer("Select process to stop...")
-        await callback.message.edit_text("🛑 <b>Select a process to stop:</b>", reply_markup=InlineKeyboardMarkup(keyboard))
+        await callback.message.edit_text("🛑 <b><i>Select a process to stop:</i></b>", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("kill_"):
         parts = data.split("_", 1)[1].split(":")
@@ -1161,7 +1195,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         active_proj_str = db.get_active_project(user_id)
         if not active_proj_str: return await callback.answer("❌ No active project!", show_alert=True)
         await callback.answer("Loading log options...")
-        await callback.message.edit_text("📜 <b>Select Log Type:</b>", reply_markup=InlineKeyboardMarkup([
+        await callback.message.edit_text("📜 <b><i>Select Log Type:</i></b>", reply_markup=InlineKeyboardMarkup([
             [create_btn("📜 System Log (run.log)", cb="refresh_log_run.log")],
             [create_btn("🤝 Collab Audit Logs", cb="refresh_log_collab_audit.log")],
             [create_btn("🔙 Menu", cb="menu_main")]
@@ -1178,7 +1212,7 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         tail = "".join(lines[-25:]) or "(Empty)"
         
         try:
-            header_text = f"📜 <b>Logs for</b> <code>{log_filename}</code>:\n"
+            header_text = f"📜 <b><i>Logs for</i></b> <code>{log_filename}</code>:\n"
             log_body = safe_html_log(tail[-3800:])
             final_text = f"{header_text}<pre><code class='language-bash'>{log_body}</code></pre>"
             
@@ -1197,14 +1231,22 @@ async def handle_callbacks(client: Client, callback: CallbackQuery):
         except Exception: pass
 
     elif data == "menu_help":
-        txt = build_help_text(user_id)
         await callback.answer("Loading Help Guide...")
-        await callback.message.edit_text(txt, reply_markup=InlineKeyboardMarkup([[create_btn("🔙 Back", cb="menu_main")]]))
+        await callback.message.edit_text(build_help_text(user_id), reply_markup=build_help_keyboard(user_id))
+
+    elif data.startswith("help_cat_"):
+        cat_key = data.split("help_cat_")[1]
+        if cat_key not in HELP_CATEGORIES: return await callback.answer("Unknown category.", show_alert=True)
+        await callback.answer()
+        await callback.message.edit_text(
+            build_help_category_text(cat_key, user_id),
+            reply_markup=InlineKeyboardMarkup([[create_btn("🔙 Back to Categories", cb="menu_help")]])
+        )
 
     elif data.startswith("set_proj_"):
         db.set_active_project(user_id, data.split("set_proj_")[1])
         await callback.answer(f"Workspace set to {data.split('set_proj_')[1]}")
-        await callback.message.edit_text(f"✅ <b>Workspace Set:</b> <code>{data.split('set_proj_')[1]}</code>")
+        await callback.message.edit_text(f"✅ <b><i>Workspace Set:</i></b> <code>{data.split('set_proj_')[1]}</code>")
 
 # ==========================================
 # 8. ALL BOT COMMANDS
@@ -1216,8 +1258,7 @@ async def start_cmd(client: Client, message: Message): await send_main_menu(mess
 @app.on_message(filters.command("help"))
 @safe_handler
 async def help_cmd(client: Client, message: Message):
-    txt = build_help_text(message.from_user.id)
-    await message.reply_text(txt, reply_markup=InlineKeyboardMarkup([[create_btn("🔙 Back to Menu", cb="menu_main")]]))
+    await message.reply_text(build_help_text(message.from_user.id), reply_markup=build_help_keyboard(message.from_user.id))
 
 @app.on_message(filters.command("maintenance") & filters.user(ADMIN_IDS))
 @safe_handler
@@ -1250,7 +1291,7 @@ async def admin_broadcast(client: Client, message: Message):
     if len(message.command) < 2: return await message.reply_text("Usage: <code>/broadcast [msg]</code>")
     text = message.text.split(None, 1)[1]
     for u in db.get_all_users():
-        try: await client.send_message(u, f"📢 <b>Nex Host Broadcast</b>\n\n{text}")
+        try: await client.send_message(u, f"📢 {heading('Nex Host Broadcast')}\n\n{text}")
         except Exception: pass
     await message.reply_text("✅ <b>Broadcast sent.</b>")
 
@@ -1259,7 +1300,7 @@ async def admin_broadcast(client: Client, message: Message):
 async def admin_active_cmd(client: Client, message: Message):
     running = [k for k, p in ACTIVE_PROCESSES.items() if p.returncode is None]
     if not running: return await message.reply_text("⚠️ <b>No processes are running globally.</b>")
-    text = "🌐 <b>Global Running Processes:</b>\n\n"
+    text = "🌐 <b><i>Global Running Processes:</i></b>\n\n"
     for i, k in enumerate(running):
         uid, proj, path = k.split(":", 2)
         text += f"{i+1}. 👤 <code>{uid}</code> | 📁 <code>{proj}</code> | 📄 <code>{path}</code>\n   🛑 <code>/admin_stop {uid} {proj} {path}</code>\n\n"
@@ -1311,9 +1352,9 @@ async def view_collabs(client: Client, message: Message):
     
     collabs = get_collabs()
     collab_users = collabs.get(f"{owner_id}:{proj_name}", [])
-    text = f"👥 <b>Collaboration Info:</b> {proj_name}\n<blockquote>👑 <b>Owner:</b> <code>{owner_id}</code>\n"
+    text = f"👥 {heading('Collaboration Info:')} {proj_name}\n<blockquote>👑 <b><i>Owner:</i></b> <code>{owner_id}</code>\n"
     if collab_users:
-        text += "🤝 <b>Collaborators:</b>\n"
+        text += "🤝 <b><i>Collaborators:</i></b>\n"
         for cu in collab_users: text += f" ├─ <code>{cu}</code>\n"
     else: text += "<i>(No collaborators added)</i>\n"
     text += "</blockquote>"
@@ -1346,7 +1387,7 @@ async def add_collab(client: Client, message: Message):
     try:
         await client.send_message(collab_id, f"🤝 <b>Collaboration Invite!</b>\n\nUser <code>{user_id}</code> has invited you to join their workspace: <code>{proj_name}</code>.", reply_markup=kb)
         await message.reply_text(f"⏳ <b>Invitation sent to <code>{collab_id}</code> pending acceptance.</b>")
-    except Exception as e: await message.reply_text(f"❌ <b>Could not send invite:</b>\n<code>{safe_html_log(e)}</code>")
+    except Exception as e: await message.reply_text(f"❌ <b><i>Could not send invite:</i></b>\n<code>{safe_html_log(e)}</code>")
 
 @app.on_message(filters.command("remcollab"))
 @safe_handler
@@ -1371,7 +1412,7 @@ async def my_collabs_cmd(client: Client, message: Message):
     if not shared_with_me:
         return await message.reply_text("🤝 <b>No workspaces have been shared with you yet.</b>")
 
-    text = "🤝 <b>Workspaces Shared With You</b>\n<blockquote>"
+    text = f"🤝 {heading('Workspaces Shared With You')}\n<blockquote>"
     keyboard = []
     for key in shared_with_me:
         owner_id, proj = key.split(":", 1)
@@ -1528,7 +1569,7 @@ async def stop_process_cmd(client: Client, message: Message):
         path = k.split(":", 2)[2]
         keyboard.append([create_btn(f"🛑 Stop {path}", cb=f"kill_{owner_id}@{proj_name}:{path}"[:64])])
     keyboard.append([create_btn("🔙 Cancel", cb="menu_main")])
-    await message.reply_text("🛑 <b>Select process to sto stop:</b>", reply_markup=InlineKeyboardMarkup(keyboard))
+    await message.reply_text("🛑 <b><i>Select process to sto stop:</i></b>", reply_markup=InlineKeyboardMarkup(keyboard))
 
 @app.on_message(filters.command("input"))
 @safe_handler
@@ -1575,7 +1616,7 @@ async def check_logs(client: Client, message: Message):
     tail = "".join(lines[-25:]) or "(Empty)"
     
     kb = InlineKeyboardMarkup([[create_btn("🔄 Refresh Logs", cb=f"refresh_log_{log_filename}")]])
-    header_text = f"📜 <b>Logs for</b> <code>{log_filename}</code>:\n"
+    header_text = f"📜 <b><i>Logs for</i></b> <code>{log_filename}</code>:\n"
     log_body = safe_html_log(tail[-3800:])
     final_text = f"{header_text}<pre><code class='language-bash'>{log_body}</code></pre>"
     await message.reply_text(final_text, reply_markup=kb)
@@ -1598,13 +1639,13 @@ async def export_project(client: Client, message: Message):
                 for file in files: zipf.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), project_dir))
     await asyncio.to_thread(_export_zip)
     await msg.edit_text("📤 <b>Uploading...</b>")
-    await message.reply_document(document=zip_path, caption=f"📦 <b>Workspace Backup:</b> <code>{proj_name}</code>")
+    await message.reply_document(document=zip_path, caption=f"📦 <b><i>Workspace Backup:</i></b> <code>{proj_name}</code>")
     os.remove(zip_path)
 
 @app.on_message(filters.command("import"))
 @safe_handler
 async def import_project(client: Client, message: Message):
-    await message.reply_text("📥 <b>How to Import:</b>\n1️⃣ Use <code>/newproject [name]</code>\n2️⃣ Send me the <code>.zip</code> file directly in chat.")
+    await message.reply_text("📥 <b><i>How to Import:</i></b>\n1️⃣ Use <code>/newproject [name]</code>\n2️⃣ Send me the <code>.zip</code> file directly in chat.")
 
 @app.on_message(filters.command("rename"))
 @safe_handler
@@ -1712,7 +1753,7 @@ async def whoami_cmd(client: Client, message: Message):
     user_id = message.from_user.id
     role = "👑 Admin" if user_id in ADMIN_IDS else "👤 User"
     text = (
-        "🪪 <b>Your Info</b>\n"
+        f"🪪 {heading('Your Info')}\n"
         "<blockquote>"
         f"ID: <code>{user_id}</code>\n"
         f"Role: {role}"
@@ -1727,7 +1768,7 @@ async def whoami_cmd(client: Client, message: Message):
 @safe_handler
 async def handle_file_upload(client: Client, message: Message):
     MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024
-    if message.document.file_size > MAX_FILE_SIZE: return await message.reply_text(f"❌ <b>Upload Denied:</b> File exceeds the {MAX_FILE_SIZE_MB} MB limit.")
+    if message.document.file_size > MAX_FILE_SIZE: return await message.reply_text(f"❌ <b><i>Upload Denied:</i></b> File exceeds the {MAX_FILE_SIZE_MB} MB limit.")
 
     user_id = message.from_user.id
     active_proj_str = db.get_active_project(user_id)
@@ -1749,8 +1790,8 @@ async def handle_file_upload(client: Client, message: Message):
         
     log_collab_event(owner_id, proj_name, user_id, f"Uploaded file: {message.document.file_name} to {cwd}")
     
-    if cwd == ".": await msg.edit_text(f"✅ <b>Saved to workspace root:</b> <code>{proj_name}</code>")
-    else: await msg.edit_text(f"✅ <b>Saved to folder:</b> <code>{proj_name}/{cwd}</code>")
+    if cwd == ".": await msg.edit_text(f"✅ <b><i>Saved to workspace root:</i></b> <code>{proj_name}</code>")
+    else: await msg.edit_text(f"✅ <b><i>Saved to folder:</i></b> <code>{proj_name}/{cwd}</code>")
 
 # ==========================================
 # 10. STARTUP
