@@ -71,17 +71,19 @@ USER_CWD = {}
 BASE_DIR = "./projects"
 MAINTENANCE_MODE = False
 
-# --- RESOURCE LIMITS (AUTO-DETECTED — maxed out to what this VPS can actually handle) ---
+# --- RESOURCE LIMITS (target 10-12GB per script, clamped to what this VPS can actually give) ---
+RAM_TARGET_GB = 12  # requested ceiling — actual value below is capped by real available RAM
 def _detect_safe_limits():
     """
-    Reads the box's real RAM/disk instead of a guessed constant, so scripts
-    get as much headroom as possible WITHOUT being able to OOM-kill the bot
-    itself (that's what was causing "deploy and it stops responding").
-    Reserves ~1.5GB RAM and ~2GB disk for the OS + this bot process.
+    Aims for RAM_TARGET_GB per script, but never hands out more than the box
+    actually has (minus ~1.5GB reserved for the OS + this bot process) —
+    going over that is what OOM-kills the bot itself, which is the exact
+    "stops responding" symptom this exists to prevent.
     """
     try:
         total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
-        ram_limit = max(1, round(total_ram_gb - 1.5, 1))
+        safe_ceiling = max(1, round(total_ram_gb - 1.5, 1))
+        ram_limit = min(RAM_TARGET_GB, safe_ceiling)
     except Exception:
         ram_limit = 9  # fallback if detection fails
 
