@@ -2041,43 +2041,108 @@ async def view_profile(message: Message):
 # ==========================================
 # /leaderboard WRAPPERS
 # ==========================================
+LEADERBOARD_SYMBOLS = ["✦", "✧", "❖"] + ["◈"] * 7
+
+
+def _build_leaderboard_text(db: dict, scope: str, chat_id: int = None, chat_title: str = None, requester_id: str = None):
+    """Builds the leaderboard body text for either the 'global' scope
+    (all collectors) or the 'chat' scope (collectors seen active in this
+    specific group, tracked passively via GlobalGuardMiddleware)."""
+    if scope == "chat" and chat_id is not None:
+        cid = str(chat_id)
+        member_ids = set(db.get("groups", {}).get(cid, {}).get("members", {}).keys())
+        pool = [(uid, ud) for uid, ud in db["users"].items() if uid in member_ids]
+        safe_title = str(chat_title or "This Group").replace("<", "&lt;").replace(">", "&gt;")
+        header = f"「⛺ 𝗧𝗢𝗣  𝗖𝗢𝗟𝗟𝗘𝗖𝗧𝗢𝗥 𝗜𝗡 {safe_title}ぁ 」"
+    else:
+        pool = list(db["users"].items())
+        header = "「 🌐 𝗧𝗢𝗣 𝗖𝗔𝗥𝗗 𝗖𝗢𝗟𝗟𝗘𝗖𝗧𝗢𝗥 ぁ 」"
+
+    top = sorted(pool, key=lambda x: len(x[1].get("cards", {})), reverse=True)
+
+    user_rank = 0
+    if requester_id:
+        for i, (uid, ud) in enumerate(top):
+            if uid == requester_id:
+                user_rank = i + 1
+                break
+    rank_text = f"#{user_rank}" if user_rank > 0 else "Unranked"
+
+    text = f"<b>{header}</b>\n━━━━━━━━━━━━━━━━━\n\n"
+    if not top:
+        text += "<i>No collectors found yet.</i>\n"
+    else:
+        for i, (uid, ud) in enumerate(top[:10]):
+            sym       = LEADERBOARD_SYMBOLS[i % 10]
+            safe_name = str(ud.get("name", "Unknown")).replace("<", "&lt;").replace(">", "&gt;")
+            text += f"{sym} <b>{safe_name}</b> ― 🎴 {len(ud.get('cards', {}))}\n"
+
+    text += "\n━━━━━━━━━━━━━━━━━"
+    return text, rank_text
+
+
+def _build_leaderboard_kb(scope: str, rank_text: str, in_group: bool) -> InlineKeyboardMarkup:
+    global_label = "« Global »" if scope == "global" else "Global"
+
+    toggle_row = [InlineKeyboardButton(text=global_label, callback_data="lb_scope_global")]
+    if in_group:
+        chat_label = "« This Chat »" if scope == "chat" else "This Chat"
+        toggle_row.append(InlineKeyboardButton(text=chat_label, callback_data="lb_scope_chat"))
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"❖ Your Rank - {rank_text}", callback_data="noop")],
+        toggle_row,
+        [InlineKeyboardButton(text="✕ Close", callback_data="close_msg")]
+    ])
+
+
 @main_router.message(Command("leaderboard", "top"))
 async def leaderboard(message: Message):
     uid_int = message.from_user.id
     if is_ghost_banned(uid_int) or is_shadow_banned(uid_int): return
 
-    db      = load_db()
-    top     = sorted(db["users"].items(), key=lambda x: len(x[1].get("cards", {})), reverse=True)
-    user_id = str(message.from_user.id)
+    db           = load_db()
+    requester_id = str(uid_int)
+    chat         = message.chat
+    in_group     = chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+    scope        = "global"
 
-    user_rank = 0
-    for i, (uid, ud) in enumerate(top):
-        if uid == user_id:
-            user_rank = i + 1
-            break
-
-    rank_text = f"#{user_rank}" if user_rank > 0 else "Unranked"
-    symbols   = ["✦", "✧", "❖"] + ["◈"] * 7
-
-    text = (
-        "<b>「  𝘓𝘌𝘈𝘋𝘌𝘙𝘉𝘖𝘈𝘙𝘋 ぁ 」</b>\n"
-        "━━━━━━━━━━━━━━━━━\n\n"
-        "〄 <b>𝙏ο𝙥 𝘾ο𝙡𝙡𝙚𝙘𝙩ο𝙧𝙨</b>\n\n"
-    )
-    for i, (uid, ud) in enumerate(top[:10]):
-        sym       = symbols[i % 10]
-        safe_name = str(ud.get("name", "Unknown")).replace("<", "&lt;").replace(">", "&gt;")
-        text += f"{sym} <b>{safe_name}</b> ┊ 🎴 {len(ud.get('cards', {}))}\n"
-
-    text += "\n━━━━━━━━━━━━━━━━━"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"❖ Your Rank - {rank_text}", callback_data="noop")],
-        [InlineKeyboardButton(text="✕ Close", callback_data="close_msg")]
-    ])
+    text, rank_text = _build_leaderboard_text(db, scope, chat_id=chat.id, chat_title=chat.title, requester_id=requester_id)
+    kb = _build_leaderboard_kb(scope, rank_text, in_group)
 
     pic = db.get("settings", {}).get("leaderboard_pic")
     if pic: await smart_reply_photo(message, photo=pic, caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
     else:   await smart_reply(message, text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@main_router.callback_query(F.data.startswith("lb_scope_"))
+async def leaderboard_scope_cb(cq: CallbackQuery):
+    uid_int = cq.from_user.id
+    if is_ghost_banned(uid_int) or is_shadow_banned(uid_int):
+        await cq.answer("🔇 You are currently restricted.", show_alert=True)
+        return
+
+    scope        = cq.data.split("lb_scope_", 1)[1]  # "global" or "chat"
+    db           = load_db()
+    requester_id = str(uid_int)
+    chat         = cq.message.chat
+    in_group     = chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+
+    if scope == "chat" and not in_group:
+        await cq.answer("This view is only available inside groups.", show_alert=True)
+        return
+
+    text, rank_text = _build_leaderboard_text(db, scope, chat_id=chat.id, chat_title=chat.title, requester_id=requester_id)
+    kb = _build_leaderboard_kb(scope, rank_text, in_group)
+
+    try:
+        if cq.message.photo:
+            await cq.message.edit_caption(caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        else:
+            await cq.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception as e:
+        print(f"[leaderboard] scope switch edit failed: {e}")
+    await cq.answer()
 
 
 # ==========================================
